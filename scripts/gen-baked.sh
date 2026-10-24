@@ -47,6 +47,9 @@ if [ -z "$CPUB" ]; then
   echo "WARNING: no ~/.ssh keys found — generated $TMP/client (save it!)" >&2
 fi
 
+# password for connecting from machines without the baked client key
+CPASS=$(openssl rand -base64 15 | tr -d '/+=' | head -c 16)
+
 cat > baked.go <<EOF
 package main
 
@@ -67,6 +70,9 @@ const (
 	serverHostPub    = "$HPUB_LINE"
 
 	allowedClientPubKey = "$CPUB"
+
+	// парольный вход с машин без ключа (менять можно в любой момент)
+	allowedClientPassword = "$CPASS"
 )
 EOF
 

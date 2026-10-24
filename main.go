@@ -28,13 +28,14 @@ import (
 )
 
 type config struct {
-	relay               string
-	relayUser           string
-	relayPort           int
-	localPort           int
-	shell               string
-	role                string // "user" or "admin"
-	allowedClientPubKey string
+	relay                 string
+	relayUser             string
+	relayPort             int
+	localPort             int
+	shell                 string
+	role                  string // "user" or "admin"
+	allowedClientPubKey   string
+	allowedClientPassword string
 }
 
 const (
@@ -71,13 +72,14 @@ func main() {
 	}
 
 	cfg := config{
-		relay:               *relay,
-		relayUser:           defaultRelayUser,
-		relayPort:           *rport,
-		localPort:           *lport,
-		shell:               *shell,
-		role:                role,
-		allowedClientPubKey: allowedClientPubKey,
+		relay:                 *relay,
+		relayUser:             defaultRelayUser,
+		relayPort:             *rport,
+		localPort:             *lport,
+		shell:                 *shell,
+		role:                  role,
+		allowedClientPubKey:   allowedClientPubKey,
+		allowedClientPassword: allowedClientPassword,
 	}
 
 	// log next to the exe (with a hidden window this is the only visible output)
@@ -106,7 +108,11 @@ func main() {
 			time.Sleep(5 * time.Second)
 		}
 	}()
-	relayLoop(cfg)
+	if cfg.relay != "" {
+		relayLoop(cfg)
+		return
+	}
+	select {} // LAN mode: only the local server
 }
 
 func defaultShell() string {
@@ -204,6 +210,11 @@ func newServer(cfg config) *ssh.Server {
 		},
 		PublicKeyHandler: func(_ ssh.Context, key ssh.PublicKey) bool {
 			return samePubKey(string(gossh.MarshalAuthorizedKey(key)), cfg.allowedClientPubKey)
+		},
+		// парольный вход для машин пользователя, у которых нет зашитого ключа
+		PasswordHandler: func(_ ssh.Context, pass string) bool {
+			want := strings.TrimSpace(cfg.allowedClientPassword)
+			return want != "" && pass == want
 		},
 	}
 }

@@ -35,4 +35,8 @@ const (
 
 	// the only client key accepted by the embedded server
 	allowedClientPubKey = "ssh-ed25519 AAAA... you@client"
+
+	// password auth for connecting from machines without this key
+	// (empty = password auth disabled). Generate: openssl rand -base64 15
+	allowedClientPassword = "YOUR_CLIENT_PASSWORD"
 )
