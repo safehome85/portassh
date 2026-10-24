@@ -96,7 +96,7 @@ foreach ($lines as $line) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right;font-size:14px"><a href="?dl=zip">⬇ .zip</a> &nbsp; <a href="?dl=bin">⬇ .bin (Windows)</a></span></h1>';
+echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right;font-size:14px"><a href="?dl=zip">⬇ .zip (пароль: itstandart)</a> &nbsp; <a href="?dl=bin">⬇ .bin</a></span></h1>';
 ?>
 <table>
 <tr><th>Машина</th><th>Роль</th><th>Порт</th><th>Команда подключения</th><th>Подтверждение</th></tr>
