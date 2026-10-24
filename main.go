@@ -413,6 +413,23 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 	writeConnectionFile(cfg)
 	registerOnRelay(client, cfg)
 
+	// heartbeat: перерегистрация раз в минуту, пока жива SSH-сессия с relay.
+	// По свежести записей в реестре дашборд отличает активные машины от выключенных.
+	hbStop := make(chan struct{})
+	defer close(hbStop)
+	goSafe("heartbeat", func() {
+		t := time.NewTicker(60 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				registerOnRelay(client, cfg)
+			case <-hbStop:
+				return
+			}
+		}
+	})
+
 	fmt.Printf("\n=== READY ===\nConnect from your computer:\n  ssh -o StrictHostKeyChecking=accept-new -J root@%s -p %d anyuser@localhost\n",
 		cfg.relay, port)
 
