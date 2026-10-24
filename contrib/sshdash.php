@@ -25,12 +25,17 @@ header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
 
 // скачивание сборки (за тем же basic auth):
-//   ?dl=1   — portassh.exe (браузеры могут блокировать неподписанные exe)
-//   ?dl=zip — portassh.zip (exe + инструкция установки) — рекомендуемый вариант
+//   ?dl=zip — portassh.zip (exe + инструкция) — основной вариант
+//   ?dl=bin — portassh.bin: браузеры не блокируют переименованный exe,
+//             на клиенте переименовать обратно в .exe
+//   ?dl=1   — портассh.exe напрямую (может блокироваться браузером)
 if (isset($_GET['dl'])) {
     if ($_GET['dl'] === 'zip') {
         $file = '/home/user/web/itstandart.kz/private/portassh.zip';
         $name = 'portassh.zip';
+    } elseif ($_GET['dl'] === 'bin') {
+        $file = '/home/user/web/itstandart.kz/private/portassh.bin';
+        $name = 'portassh.bin';
     } else {
         $file = '/home/user/web/itstandart.kz/private/portassh.exe';
         $name = 'portassh.exe';
@@ -91,7 +96,7 @@ foreach ($lines as $line) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <a style="float:right;font-size:14px" href="?dl=zip">⬇ скачать portassh.zip (exe + инструкция)</a></h1>';
+echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right;font-size:14px"><a href="?dl=zip">⬇ .zip</a> &nbsp; <a href="?dl=bin">⬇ .bin (Windows)</a></span></h1>';
 ?>
 <table>
 <tr><th>Машина</th><th>Роль</th><th>Порт</th><th>Команда подключения</th><th>Подтверждение</th></tr>
