@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    name: Тесты (${{ matrix.os }})
+    name: Tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -18,38 +18,38 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Генерация baked.go (тестовые ключи)
+      - name: Generate baked.go (test keys)
         run: ./scripts/gen-baked.sh ci-relay.invalid
       - name: Vet
         run: go vet ./...
-      - name: Тесты
+      - name: Tests
         run: go test -v ./...
 
   build-windows:
-    name: Сборка Windows 386
+    name: Windows 386 build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Генерация baked.go (тестовые ключи)
+      - name: Generate baked.go (test keys)
         run: ./scripts/gen-baked.sh ci-relay.invalid
         shell: bash
       - name: Vet
         run: go vet ./...
         shell: bash
-      - name: Сборка
+      - name: Build
         run: go build -trimpath -ldflags "-s -w -H=windowsgui" -o portassh.exe .
         shell: bash
-      - name: Артефакт
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: portassh-windows-386
           path: portassh.exe
 
   cross-compile:
-    name: Кросс-компиляция ${{ matrix.goarch }}
+    name: Cross-compile ${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Генерация baked.go (тестовые ключи)
+      - name: Generate baked.go (test keys)
         run: ./scripts/gen-baked.sh ci-relay.invalid
-      - name: Сборка windows/${{ matrix.goarch }}
+      - name: Build windows/${{ matrix.goarch }}
         run: GOOS=windows GOARCH=${{ matrix.goarch }} go build -o /dev/null .

@@ -28,13 +28,15 @@ RPUB_B64=$(base64 < "$TMP/relay" | tr -d '\n')
 HPUB_B64=$(base64 < "$TMP/host" | tr -d '\n')
 HPUB_LINE=$(cat "$TMP/host.pub")
 
-# relay host key: the real one (if the relay is reachable) or a placeholder for tests
+# relay host key: the real one (if the relay is reachable) or a syntactically
+# valid stand-in built from the generated server key (tests only compile it,
+# they never dial the relay)
 HKLINE=$(ssh-keyscan -t ed25519 "$RELAY_HOST" 2>/dev/null | grep -v '^#' | head -1)
 if [ -z "$HKLINE" ]; then
   echo "WARNING: could not read the host key from $RELAY_HOST — a placeholder was written." >&2
   echo "Before real use replace relayHostKeyLine with the output of:" >&2
   echo "  ssh-keyscan -t ed25519 $RELAY_HOST" >&2
-  HKLINE="$RELAY_HOST ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPASTE_THE_REAL_KEY"
+  HKLINE="$RELAY_HOST $HPUB_LINE"
 fi
 
 # client key: an existing ssh key or a freshly generated one
