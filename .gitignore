@@ -1,0 +1,21 @@
+# сборка
+portassh.exe
+portassh_386.exe
+portassh_arm64.exe
+portassh_*.exe
+*.signed
+
+# приватный конфиг с ключами (публичный шаблон — baked.go.example)
+baked.go
+
+# подпись и локальные артефакты
+sign.pfx
+*.log
+portassh_connection*.txt
+
+# рабочие документы с инфраструктурными данными
+ISSUES.md
+grill-plan.md
+
+# go
+*.test
