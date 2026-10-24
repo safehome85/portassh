@@ -24,12 +24,21 @@ $SKEW = $sysNow - mktime((int)$sh, (int)$sm, 0);
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
 
-// скачивание сборки (за тем же basic auth): /sshdash?dl=1
+// скачивание сборки (за тем же basic auth):
+//   ?dl=1   — portassh.exe (браузеры могут блокировать неподписанные exe)
+//   ?dl=zip — portassh.zip (exe + инструкция установки) — рекомендуемый вариант
 if (isset($_GET['dl'])) {
-    $exe = @file_get_contents($EXE);
+    if ($_GET['dl'] === 'zip') {
+        $file = '/home/user/web/itstandart.kz/private/portassh.zip';
+        $name = 'portassh.zip';
+    } else {
+        $file = '/home/user/web/itstandart.kz/private/portassh.exe';
+        $name = 'portassh.exe';
+    }
+    $exe = @file_get_contents($file);
     if ($exe === false) { http_response_code(404); exit('no build uploaded'); }
-    header('Content-Type: application/octet-stream');
-    header('Content-Disposition: attachment; filename="portassh.exe"');
+    header('Content-Type: application/zip');
+    header('Content-Disposition: attachment; filename="' . $name . '"');
     header('Content-Length: ' . strlen($exe));
     echo $exe;
     exit;
@@ -82,7 +91,7 @@ foreach ($lines as $line) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <a style="float:right;font-size:14px" href="?dl=1">⬇ скачать portassh.exe</a></h1>';
+echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <a style="float:right;font-size:14px" href="?dl=zip">⬇ скачать portassh.zip (exe + инструкция)</a></h1>';
 ?>
 <table>
 <tr><th>Машина</th><th>Роль</th><th>Порт</th><th>Команда подключения</th><th>Подтверждение</th></tr>
