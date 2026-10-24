@@ -10,6 +10,7 @@
  * Секретный адрес — не публикуйте ссылку.
  */
 $REGISTRY    = '/home/user/web/itstandart.kz/private/portassh-online.txt';
+$EXE         = '/home/user/web/itstandart.kz/private/portassh.exe'; // сборка для скачивания (копируется cron'ом)
 $RELAY       = 'ВАШ_RELAY_IP'; // IP/домен relay-сервера для колонки «Команда подключения»
 $ACTIVE_SECS = 180;           // heartbeat у exe раз в 60 с — запас ×3
 $MAX_AGE     = 7 * 86400;     // записи старше недели игнорируются вовсе
@@ -22,6 +23,17 @@ $SKEW = $sysNow - mktime((int)$sh, (int)$sm, 0);
 
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
+
+// скачивание сборки (за тем же basic auth): /sshdash?dl=1
+if (isset($_GET['dl'])) {
+    $exe = @file_get_contents($EXE);
+    if ($exe === false) { http_response_code(404); exit('no build uploaded'); }
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="portassh.exe"');
+    header('Content-Length: ' . strlen($exe));
+    echo $exe;
+    exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -70,7 +82,7 @@ foreach ($lines as $line) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span></h1>';
+echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <a style="float:right;font-size:14px" href="?dl=1">⬇ скачать portassh.exe</a></h1>';
 ?>
 <table>
 <tr><th>Машина</th><th>Роль</th><th>Порт</th><th>Команда подключения</th><th>Подтверждение</th></tr>

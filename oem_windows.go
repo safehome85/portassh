@@ -24,3 +24,12 @@ func setCmdLine(cmd *exec.Cmd, line string) {
 func oemDecoder() transform.Transformer {
 	return charmap.CodePage866.NewDecoder()
 }
+
+// startDetached запускает процесс, переживающий завершение родителя.
+func startDetached(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.HideWindow = true
+	_ = cmd.Start()
+}

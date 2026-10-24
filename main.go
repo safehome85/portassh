@@ -4,7 +4,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,7 +38,10 @@ type config struct {
 	role                  string // "user" or "admin"
 	allowedClientPubKey   string
 	allowedClientPassword string
+	noUpdate              bool
 }
+
+var buildStamp = "dev" // переопределяется при сборке: -ldflags "-X portassh.buildStamp=..."
 
 const (
 	roleUser  = "user"
@@ -44,6 +49,10 @@ const (
 
 	defaultRPortAdmin = 2201 // admin instance keeps its own relay port
 	defaultLPortAdmin = 2223
+
+	// self-update: build + its sha256 are uploaded here on the relay
+	updateVersionPath = "/home/portassh/updates/version.txt"
+	updateExePath     = "/home/portassh/updates/portassh.exe"
 )
 
 func main() {
@@ -54,7 +63,9 @@ func main() {
 	shell := flag.String("shell", defaultShell(), "shell for sessions")
 	admin := flag.Bool("admin", false, "start an admin instance (UAC prompt, second tunnel: relay port 2201)")
 	elevated := flag.Bool("elevated", false, "(internal) instance already elevated via UAC")
+	noUpdate := flag.Bool("noupdate", false, "disable self-update checks")
 	flag.Parse()
+	cfgNoUpdate := *noUpdate
 
 	role := roleUser
 	if *admin || *elevated {
@@ -80,6 +91,7 @@ func main() {
 		role:                  role,
 		allowedClientPubKey:   allowedClientPubKey,
 		allowedClientPassword: allowedClientPassword,
+		noUpdate:              cfgNoUpdate,
 	}
 
 	// log next to the exe (with a hidden window this is the only visible output)
@@ -91,11 +103,16 @@ func main() {
 	}
 
 	fmt.Println("=== portassh ===")
-	fmt.Printf("Started (%s). Waiting for the relay tunnel...\n", role)
+	fmt.Printf("Started (%s) build %s. Waiting for the relay tunnel...\n", role, buildStamp)
 
 	// working directory = user profile: this is where scp/sftp files land
 	if home, err := os.UserHomeDir(); err == nil {
 		_ = os.Chdir(home)
+	}
+
+	// remove the previous-version backup after a self-update
+	if exe, err := os.Executable(); err == nil {
+		_ = os.Remove(exe + ".old")
 	}
 
 	go func() {
@@ -440,6 +457,20 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 			}
 		}
 	})
+	if !cfg.noUpdate {
+		goSafe("update-check", func() {
+			for {
+				if err := selfUpdate(client, cfg); err != nil {
+					log.Printf("update: %v", err)
+				}
+				select {
+				case <-time.After(30 * time.Minute):
+				case <-hbStop:
+					return
+				}
+			}
+		})
+	}
 
 	fmt.Printf("\n=== READY ===\nConnect from your computer:\n  ssh -o StrictHostKeyChecking=accept-new -J root@%s -p %d anyuser@localhost\n",
 		cfg.relay, port)
@@ -537,6 +568,68 @@ func sanitizeLine(s string) string {
 		}
 		return -1
 	}, s)
+}
+
+// --- self-update ---
+// A new build is placed on the relay in /home/portassh/updates/ (portassh.exe
+// + version.txt containing its sha256). The instance compares the hash of its
+// own exe, downloads the new version through the tunnel and restarts itself.
+
+func fetchViaSSH(client *gossh.Client, path string) ([]byte, error) {
+	sess, err := client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	defer sess.Close()
+	return sess.Output("cat " + path)
+}
+
+func selfUpdate(client *gossh.Client, cfg config) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cur, err := os.ReadFile(exePath)
+	if err != nil {
+		return err
+	}
+	curSum := sha256.Sum256(cur)
+
+	ver, err := fetchViaSSH(client, updateVersionPath)
+	if err != nil {
+		return err
+	}
+	remoteSum := strings.TrimSpace(string(ver))
+	if remoteSum == hex.EncodeToString(curSum[:]) {
+		return nil // up to date
+	}
+	bin, err := fetchViaSSH(client, updateExePath)
+	if err != nil {
+		return err
+	}
+	binSum := sha256.Sum256(bin)
+	if remoteSum != hex.EncodeToString(binSum[:]) {
+		return errors.New("downloaded build hash mismatch, skipping")
+	}
+
+	newP, oldP := exePath+".new", exePath+".old"
+	if err := os.WriteFile(newP, bin, 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(oldP)
+	if err := os.Rename(exePath, oldP); err != nil {
+		return err
+	}
+	if err := os.Rename(newP, exePath); err != nil {
+		_ = os.Rename(oldP, exePath) // rollback
+		return err
+	}
+
+	cmd := exec.Command(exePath, os.Args[1:]...)
+	startDetached(cmd)
+	log.Printf("update: new build started, restarting")
+	os.Exit(0)
+	return nil
 }
 
 // --- baked credentials ---

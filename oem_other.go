@@ -15,3 +15,8 @@ func oemDecoder() transform.Transformer {
 
 // setCmdLine: on non-Windows exec.Cmd builds the command line itself.
 func setCmdLine(cmd *exec.Cmd, line string) {}
+
+// startDetached: child processes survive parent exit on unix.
+func startDetached(cmd *exec.Cmd) {
+	_ = cmd.Start()
+}
