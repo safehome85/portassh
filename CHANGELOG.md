@@ -1,42 +1,44 @@
 # Changelog
 
-Все заметные изменения проекта документируются в этом файле.
-Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
+All notable changes to this project are documented in this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.0.0] — 2026-10-24
 
-Первый публичный релиз. Прошёл боевую эксплуатацию: ~100 exec-команд в день
-через туннель (PowerShell, cmd, reg, cscript, rundll32, передача файлов),
-верификация на живом туннеле Mac → VPS → Windows 10 Pro.
+First public release. Battle-tested: ~100 exec commands per day through the
+tunnel (PowerShell, cmd, reg, cscript, rundll32, file transfers), verified on
+a live Mac → VPS → Windows 10 Pro tunnel.
 
 ### Added
-- Встроенный SSH-сервер на loopback: интерактивный шелл (ConPTY через
-  [go-pty](https://github.com/aymanbagabas/go-pty)), выполнение команд, SFTP
-- Reverse-туннель к relay-серверу с зашитыми ключами — ноль настройки на цели
-- Авто-reconnect с экспоненциальным backoff (5→30 с), переживает kill sshd
-  на relay (~11 с до восстановления)
-- Multi-machine: реестр машин на relay (`online.txt`), автоподбор свободного
-  порта (2200–2299), до 100 машин одновременно
-- Админ-режим: `portassh.exe -admin` — одно окно UAC, второй экземпляр
-  с правами администратора и собственным туннелем (порт 2201)
-- Квотирование 1:1: сырая командная строка клиента доходит до cmd без
-  пересборки (`SysProcAttr.CmdLine` + `cmd /d /s /c`)
-- UTF-8: декодирование вывода CP866→UTF-8 на лету, без спавна chcp
-- Устойчивость: spawn-retry ×3 при блокировке антивирусом (exit 127 при
-  окончательной неудаче), паники изолируются с записью стека в лог
-- `HideWindow` для дочерних консолей — окно не мигает
-- Манифест `asInvoker`, иконка, метаданные файла; условная код-подпись в build.sh
-- Один универсальный бинарник: 386 запускается на Win10/11 x64 (WOW64),
-  x86 и ARM64 (эмуляция x86)
+- Embedded SSH server on loopback: interactive shell (ConPTY via
+  [go-pty](https://github.com/aymanbagabas/go-pty)), command execution, SFTP
+- Reverse tunnel to a relay server with baked-in credentials — zero setup on
+  the target
+- Auto-reconnect with exponential backoff (5→30 s); survives killing sshd on
+  the relay (~11 s to recovery)
+- Multi-machine: registry on the relay (`online.txt`), automatic free-port
+  allocation (2200–2299), up to 100 machines at once
+- Admin mode: `portassh.exe -admin` — one UAC prompt, a second instance
+  running as administrator with its own tunnel (port 2201)
+- 1:1 quoting: the client's raw command line reaches cmd without being
+  rebuilt (`SysProcAttr.CmdLine` + `cmd /d /s /c`)
+- UTF-8: CP866 output decoded to UTF-8 on the fly, no chcp spawning
+- Resilience: spawn retry ×3 when blocked by antivirus (exit 127 on final
+  failure), panics isolated with stack traces written to the log
+- `HideWindow` for child consoles — no window flashing
+- `asInvoker` manifest, icon, file metadata; optional code signing in build.sh
+- One universal binary: the 386 build runs on Win10/11 x64 (WOW64),
+  x86 and ARM64 (x86 emulation)
 
 ### Changed
-- Обратные слэши передаются дословно: одиночный `\` приходит как `\`
-  (в ранних сборках `\\` схлопывался до `\` нестабильным образом)
-- Рабочая папка экземпляра — профиль пользователя, а не рабочий стол
+- Backslashes are passed verbatim: a single `\` arrives as `\`
+  (early builds collapsed `\\` into `\` in an unstable way)
+- Instance working directory is the user profile, not the desktop
 
 ### Security
-- Приватные ключи туннеля запекаются в бинарник при сборке: держатель exe
-  может открывать туннели через ваш relay. Не публикуйте собранные бинарники
-- Встроенный сервер принимает только один зашитый клиентский ключ и только
-  через loopback
-- Host key relay фиксируется при сборке (без TOFU)
+- The tunnel private key is baked into the binary at build time: whoever
+  holds the exe can open tunnels through your relay. Do not publish built
+  binaries
+- The embedded server accepts exactly one baked client key and listens on
+  loopback only
+- The relay host key is pinned at build time (no TOFU)

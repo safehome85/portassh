@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// isElevated: запущен ли процесс с повышенными правами.
+// isElevated reports whether the current process runs with elevated rights.
 func isElevated() bool {
 	token, err := windows.OpenCurrentProcessToken()
 	if err != nil {
@@ -21,8 +21,8 @@ func isElevated() bool {
 	return token.IsElevated()
 }
 
-// elevateSelf перезапускает себя же через UAC (verb "runas") с дополнительным
-// аргументом. Ошибка возвращается и при отказе пользователя в окне UAC.
+// elevateSelf relaunches itself through UAC (verb "runas") with an extra
+// argument. An error is also returned when the user declines the UAC prompt.
 func elevateSelf(extraArg string) error {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -49,7 +49,7 @@ func elevateSelf(extraArg string) error {
 		1, // SW_SHOWNORMAL
 	)
 	if rc <= 32 {
-		return fmt.Errorf("не удалось поднять админ-экземпляр (UAC отклонён или нет прав): код %d", rc)
+		return fmt.Errorf("failed to launch the admin instance (UAC declined or no rights): code %d", rc)
 	}
 	return nil
 }

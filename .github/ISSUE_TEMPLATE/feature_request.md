@@ -1,21 +1,21 @@
 ---
-name: Предложение функции
-about: Расскажите, какой сценарий не покрывается
+name: Feature request
+about: Describe a scenario that is not covered
 labels: enhancement
 ---
 
-## Сценарий
+## Scenario
 
-<!-- Какую задачу решаете и что мешает сделать это сейчас -->
+<!-- What you are trying to achieve and what blocks it today -->
 
-## Предлагаемое решение
+## Proposed solution
 
-<!-- Как это должно работать с точки зрения пользователя -->
+<!-- How it should work from the user's point of view -->
 
-## Альтернативы
+## Alternatives
 
-<!-- Рассматривали ли готовые инструменты (rospo, chisel, ReverseSSH)? -->
+<!-- Did you consider existing tools (rospo, chisel, ReverseSSH)? -->
 
-## Дополнительно
+## Additional context
 
-<!-- Ограничения: права на цели, антивирусы, топология сети -->
+<!-- Constraints: target privileges, antivirus, network topology -->

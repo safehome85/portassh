@@ -1,30 +1,33 @@
-# Политика безопасности
+# Security Policy
 
-portassh — инструмент удалённого доступа: вопросы безопасности здесь важнее
-среднего, поэтому сообщайте об уязвимостях ответственно.
+portassh is a remote-access tool: security questions matter more than usual
+here, so please report vulnerabilities responsibly.
 
-## Как сообщить об уязвимости
+## How to report a vulnerability
 
-Используйте кнопку **Report a vulnerability** (Security → Advisories) в этом
-репозитории — приватный канал. **Не заводите публичный issue** с деталями
-эксплуатируемой проблемы.
+Use the **Report a vulnerability** button (Security → Advisories) in this
+repository — a private channel. **Do not open a public issue** with details of
+an exploitable problem.
 
-Ожидаемый срок ответа: 3 дня. Координация раскрытия: 90 дней.
+Expected response time: 3 days. Coordinated disclosure: 90 days.
 
-## Зоны наибольшего внимания
+## Areas of greatest interest
 
-- `baked.go` / собранный exe: содержат приватные ключи туннеля и client key
-- Изоляция сессий: одна сессия не должна влиять на туннель и другие сессии
-- Аутентификация встроенного сервера: соответствие клиентского ключа
-- TOFU/FixedHostKey relay-соединения
+- `baked.go` / the built exe: they contain the tunnel private key and the
+  client key
+- Session isolation: one session must never affect the tunnel or other
+  sessions
+- Embedded server authentication: client key matching
+- TOFU/FixedHostKey of the relay connection
 
-## Что считается не уязвимостью
+## What is NOT considered a vulnerability
 
-- Утечка exe в третьи руки: ключ туннеля внутри бинарника — осознанный
-  компромисс дизайна (см. README, раздел «Безопасность»). Компрометация
-  бинарника = компрометация туннеля, relay-аккаунт ограничен форвардингом
-- Блокировки антивирусами неподписанного бинарника
+- The exe leaking into third parties: the tunnel key inside the binary is a
+  deliberate design trade-off (see README, Security section). A compromised
+  binary = a compromised tunnel; the relay account is limited to port
+  forwarding
+- Antivirus blocks on the unsigned binary
 
-## Версии с поддержкой
+## Supported versions
 
-Поддерживается последняя версия `main`.
+The latest version of `main`.

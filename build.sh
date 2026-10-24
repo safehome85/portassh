@@ -1,26 +1,26 @@
 #!/bin/sh
-# Кросс-компиляция portassh для Windows из macOS/Linux.
-# Один универсальный файл: 386 запускается на Win10/11 x64 (WOW64), x86 и ARM64 (эмуляция x86).
-# -H=windowsgui: без консольного окна; статус пишется в portassh.log рядом с exe.
+# Cross-compile portassh for Windows from macOS/Linux.
+# One universal file: 386 runs on Win10/11 x64 (WOW64), x86 and ARM64 (x86 emulation).
+# -H=windowsgui: no console window; status is written to portassh.log next to the exe.
 set -e
 cd "$(dirname "$0")"
 
 if [ ! -f "baked.go" ]; then
-  echo "ОШИБКА: нет baked.go — скопируйте baked.go.example и заполните своими ключами." >&2
-  echo "  cp baked.go.example baked.go  (затем отредактируйте)" >&2
+  echo "ERROR: baked.go not found — copy baked.go.example and fill in your keys." >&2
+  echo "  cp baked.go.example baked.go  (then edit it)" >&2
   exit 1
 fi
 
 GOOS=windows GOARCH=386 go build -trimpath -ldflags "-s -w -H=windowsgui" -o portassh.exe .
 
-# Условная подпись: положите рядом sign.pfx (и установите osslsigncode),
-# задайте SIGN_PASS — и сборка подпишется автоматически. Пока файла нет, шаг пропускается.
+# Optional code signing: place sign.pfx next to the script (and install
+# osslsigncode), set SIGN_PASS — the build signs itself. Without the file the step is skipped.
 if [ -f "sign.pfx" ] && command -v osslsigncode >/dev/null 2>&1; then
-  osslsigncode sign -pkcs12 "sign.pfx" -pass "${SIGN_PASS:?SIGN_PASS не задан}" \
+  osslsigncode sign -pkcs12 "sign.pfx" -pass "${SIGN_PASS:?SIGN_PASS is not set}" \
     -n "portassh" -i "https://example.com" -in portassh.exe -out portassh.exe.signed \
-    && mv portassh.exe.signed portassh.exe && echo "подписано: portassh.exe"
+    && mv portassh.exe.signed portassh.exe && echo "signed: portassh.exe"
 else
-  echo "skip: подпись (нет sign.pfx или osslsigncode)"
+  echo "skip: signing (no sign.pfx or osslsigncode)"
 fi
 
 ls -lh portassh.exe

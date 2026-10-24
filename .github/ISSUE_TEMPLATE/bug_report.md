@@ -1,34 +1,34 @@
 ---
-name: Баг-репорт
-about: Сообщите о проблеме — приложите лог и шаги воспроизведения
+name: Bug report
+about: Report a problem — attach the log and reproduction steps
 labels: bug
 ---
 
-## Описание
+## Description
 
-<!-- Кратко: что произошло и что ожидалось -->
+<!-- Briefly: what happened and what was expected -->
 
-## Шаги воспроизведения
+## Steps to reproduce
 
 1.
 2.
 3.
 
-## Окружение
+## Environment
 
-- Версия portassh: <!-- portassh.exe --version или дата сборки -->
-- ОС цели: <!-- например Windows 10 Pro 22H2, x64 -->
-- ОС клиента: <!-- например macOS 15 -->
-- Relay: <!-- тип сервера (VPS OpenSSH / ...), БЕЗ IP и домена -->
+- portassh version: <!-- build date or build hash -->
+- Target OS: <!-- e.g. Windows 10 Pro 22H2, x64 -->
+- Client OS: <!-- e.g. macOS 15 -->
+- Relay: <!-- server type (VPS OpenSSH / ...), WITHOUT IP or domain -->
 
-## Лог
+## Log
 
-<!-- portassh.log рядом с exe — удалите приватные данные, если есть -->
+<!-- portassh.log next to the exe — remove any private data first -->
 
 ```
-вставьте сюда
+paste here
 ```
 
-## Дополнительно
+## Additional context
 
-<!-- Скриншоты, вывод команд -->
+<!-- Screenshots, command output -->

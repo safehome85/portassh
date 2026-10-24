@@ -1,33 +1,33 @@
 # Contributing
 
-Спасибо за интерес к проекту!
+Thanks for your interest in the project!
 
-## Как предложить изменение
+## How to propose a change
 
-1. Откройте issue с описанием сценария (шаблоны: «Баг-репорт» / «Предложение
-   функции») — договоримся о подходе до кода
-2. Форкните репозиторий, создайте ветку от `main`
-3. Внесите изменения, следуя правилам ниже
-4. Откройте PR по шаблону
+1. Open an issue describing the scenario (templates: "Bug report" /
+   "Feature request") — let's agree on the approach before writing code
+2. Fork the repository, create a branch from `main`
+3. Make your changes following the rules below
+4. Open a PR using the template
 
-## Правила
+## Rules
 
-- `gofmt -w .` и `go vet ./...` — обязательны, `go test ./...` — зелёный
-- Ключи, IP, имена машин в коммитах запрещены: `baked.go`, логи и рабочие
-  документы игнорируются — не отключайте .gitignore
-- Комментарии и сообщения — на русском или английском, без смешения в одном
-  предложении
-- Изменения поведения описываются в CHANGELOG.md (формат Keep a Changelog)
+- `gofmt -w .` and `go vet ./...` are mandatory, `go test ./...` must be green
+- Keys, IPs and machine names must never appear in commits: `baked.go`, logs
+  and working documents are gitignored — do not disable .gitignore
+- Comments and messages: English or Russian, but do not mix languages within
+  a single sentence
+- Behavioural changes go into CHANGELOG.md (Keep a Changelog format)
 
-## Тестирование
+## Testing
 
-Интерактивные сценарии проверяются e2e-тестами (`TestEndToEndShell` — реальный
-PTY через gliderlabs); изменения в exec/pty/tunnel покрытии ожидайте вопрос
-«как это проверено на живом туннеле».
+Interactive scenarios are covered by e2e tests (`TestEndToEndShell` — a real
+PTY through gliderlabs). Changes to exec/pty/tunnel coverage will likely get
+the question "how was this verified on a live tunnel".
 
-## Локальная сборка
+## Local build
 
 ```sh
-./scripts/gen-baked.sh relay.example.com   # ключи + конфиг
-./build.sh                                 # сборка (нужен заполненный baked.go)
+./scripts/gen-baked.sh relay.example.com   # keys + config
+./build.sh                                 # build (requires a filled baked.go)
 ```

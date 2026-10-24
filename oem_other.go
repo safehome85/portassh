@@ -8,10 +8,10 @@ import (
 	"golang.org/x/text/transform"
 )
 
-// oemDecoder: на не-Windows вывод shell уже UTF-8.
+// oemDecoder: on non-Windows the shell output is already UTF-8.
 func oemDecoder() transform.Transformer {
 	return nil
 }
 
-// setCmdLine: на не-Windows exec.Cmd собирает командную строку сам.
+// setCmdLine: on non-Windows exec.Cmd builds the command line itself.
 func setCmdLine(cmd *exec.Cmd, line string) {}

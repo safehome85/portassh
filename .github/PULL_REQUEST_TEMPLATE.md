@@ -1,21 +1,21 @@
 # Pull Request
 
-## Что изменено
+## What changed
 
-<!-- 1-3 предложения по существу -->
+<!-- 1–3 sentences, essentials only -->
 
-## Зачем
+## Why
 
-<!-- Какой сценарий/проблема -->
+<!-- Which scenario / problem -->
 
-## Проверено
+## Verified
 
-- [ ] `go vet ./...` и `go test ./...` проходят
-- [ ] `gofmt -w .` применён
-- [ ] Собрано под Windows 386 (`GOOS=windows GOARCH=386 go build ./...`)
-- [ ] Приватные данные (ключи, IP, имена машин) не добавлены в код и README
-- [ ] Поведенческие изменения описаны в CHANGELOG.md
+- [ ] `go vet ./...` and `go test ./...` pass
+- [ ] `gofmt -w .` applied
+- [ ] Windows 386 build succeeds (`GOOS=windows GOARCH=386 go build ./...`)
+- [ ] No private data (keys, IPs, machine names) added to code or README
+- [ ] Behavioural changes described in CHANGELOG.md
 
-## Примечания
+## Notes
 
-<!-- Риски, обратная совместимость, скриншоты -->
+<!-- Risks, backward compatibility, screenshots -->

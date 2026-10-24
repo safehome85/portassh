@@ -86,7 +86,7 @@ func TestEndToEndShell(t *testing.T) {
 
 	out, err := readUntilMark(t, stdout, "TUNNEL_OK_42", 10*time.Second)
 	if err != nil {
-		t.Fatalf("%v, получено: %q", err, out)
+		t.Fatalf("%v, got: %q", err, out)
 	}
 }
 
@@ -105,60 +105,60 @@ func TestAuthRejected(t *testing.T) {
 
 	wrongSigner, _ := clientKey(t)
 	cases := map[string][]gossh.AuthMethod{
-		"чужой ключ":    {gossh.PublicKeys(wrongSigner)},
-		"без ключа":     nil,
-		"пустой пароль": {gossh.Password("")},
+		"wrong key":      {gossh.PublicKeys(wrongSigner)},
+		"no key":         nil,
+		"empty password": {gossh.Password("")},
 	}
 	for name, auth := range cases {
 		cl, err := dialTarget(t, ln.Addr().String(), auth)
 		if err == nil {
 			cl.Close()
-			t.Fatalf("%s: сервер пустил подключение", name)
+			t.Fatalf("%s: server accepted the connection", name)
 		}
 		if !strings.Contains(err.Error(), "unable to authenticate") {
-			t.Fatalf("%s: неожиданная ошибка: %v", name, err)
+			t.Fatalf("%s: unexpected error: %v", name, err)
 		}
 	}
 }
 
 func TestBakedMaterial(t *testing.T) {
 	signer := mustLoadBakedSigner(relayPrivKeyB64)
-	// приватный relay-ключ соответствует строке host key relay? Нет — просто проверяем парсинг
+	// relay private key vs host key line: just verify parsing
 	if signer.PublicKey().Type() != gossh.KeyAlgoED25519 {
-		t.Fatalf("relay-ключ не ed25519: %s", signer.PublicKey().Type())
+		t.Fatalf("relay key is not ed25519: %s", signer.PublicKey().Type())
 	}
 	hostSigner := mustLoadBakedSigner(serverHostKeyB64)
 	if hostSigner.PublicKey().Type() != gossh.KeyAlgoED25519 {
-		t.Fatalf("host-ключ не ed25519: %s", hostSigner.PublicKey().Type())
+		t.Fatalf("host key is not ed25519: %s", hostSigner.PublicKey().Type())
 	}
 	pub, err := bakedRelayHostKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pub.Type() != gossh.KeyAlgoED25519 {
-		t.Fatalf("host key relay не ed25519: %s", pub.Type())
+		t.Fatalf("relay host key is not ed25519: %s", pub.Type())
 	}
 	if !strings.HasPrefix(allowedClientPubKey, "ssh-") {
-		t.Fatalf("плохой клиентский ключ: %q", allowedClientPubKey)
+		t.Fatalf("bad client key: %q", allowedClientPubKey)
 	}
 	if defaultRelay == "" || defaultRelayUser == "" {
-		t.Fatal("не заданы relay-константы")
+		t.Fatal("relay constants are not set")
 	}
 }
 
 func TestServerAddr(t *testing.T) {
 	if got := newServerAddr(config{relay: "x", localPort: 2222}); got != "127.0.0.1:2222" {
-		t.Fatalf("с туннелем должен быть только loopback, получено %s", got)
+		t.Fatalf("with a tunnel the address must be loopback, got %s", got)
 	}
 	if got := newServerAddr(config{relay: "", localPort: 2222}); got != "0.0.0.0:2222" {
-		t.Fatalf("без туннеля ожидается 0.0.0.0, получено %s", got)
+		t.Fatalf("without a tunnel expected 0.0.0.0, got %s", got)
 	}
 	if srv := newServer(config{relay: "x", localPort: 2222, allowedClientPubKey: "ssh-ed25519 x"}); srv.Addr != "127.0.0.1:2222" {
-		t.Fatalf("новый сервер не получил адрес: %s", srv.Addr)
+		t.Fatalf("new server did not get the address: %s", srv.Addr)
 	}
 }
 
-// readUntilMark инкрементально читает из r, пока не встретит mark или не истечёт d.
+// readUntilMark reads from r incrementally until mark appears or d expires.
 func readUntilMark(t *testing.T, r io.Reader, mark string, d time.Duration) (string, error) {
 	t.Helper()
 	deadline := time.Now().Add(d)
@@ -219,7 +219,7 @@ func TestForward(t *testing.T) {
 
 	out, err := readUntilMark(t, clientEnd, "ping", 5*time.Second)
 	if err != nil {
-		t.Fatalf("эхо не вернулось: %v, вывод: %q", err, out)
+		t.Fatalf("echo did not return: %v, output: %q", err, out)
 	}
 }
 
@@ -250,7 +250,7 @@ func TestSftpUploadDownload(t *testing.T) {
 
 	dir := t.TempDir()
 	upPath := filepath.Join(dir, "uploaded.txt")
-	payload := "портассш загрузка файла ок"
+	payload := "portassh file upload ok"
 	f, err := sftpCl.Create(upPath)
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +272,7 @@ func TestSftpUploadDownload(t *testing.T) {
 	}
 	r.Close()
 	if string(got) != payload {
-		t.Fatalf("round-trip не совпал: %q != %q", got, payload)
+		t.Fatalf("round-trip mismatch: %q != %q", got, payload)
 	}
 	if st, err := sftpCl.Stat(upPath); err != nil || st.Size() != int64(len(payload)) {
 		t.Fatalf("stat: %v %+v", err, st)
@@ -284,42 +284,42 @@ func TestRegistryLineAndRoleDefaults(t *testing.T) {
 	line := registryLine("My-PC.1", 2200, roleUser, when)
 	fields := strings.Fields(line)
 	if len(fields) != 4 {
-		t.Fatalf("в строке реестра должно быть 4 поля: %q", line)
+		t.Fatalf("registry line must have 4 fields: %q", line)
 	}
 	if fields[0] != "My-PC.1" || fields[1] != "2200" || fields[3] != "user" {
-		t.Fatalf("плохая строка реестра: %q", line)
+		t.Fatalf("bad registry line: %q", line)
 	}
 	if !strings.HasSuffix(registryLine("pc", 2201, roleAdmin, when), " admin") {
-		t.Fatal("роль admin не попала в строку")
+		t.Fatal("admin role missing from the line")
 	}
-	// перевод строки в имени не должен ломать формат реестра
+	// a newline in the name must not break the registry format
 	if bad := registryLine("evil\nline", 2200, roleUser, when); strings.ContainsAny(bad, "\n\r") {
-		t.Fatalf("инъекция перевода строки: %q", bad)
+		t.Fatalf("newline injection: %q", bad)
 	}
 
-	// дефолты ролей
+	// role defaults
 	if rp, lp := applyRoleDefaults(false, defaultRPort, defaultLPort); rp != defaultRPort || lp != defaultLPort {
-		t.Fatal("у user-экземпляра порты не должны меняться")
+		t.Fatal("user instance ports must not change")
 	}
 	if rp, lp := applyRoleDefaults(true, defaultRPort, defaultLPort); rp != defaultRPortAdmin || lp != defaultLPortAdmin {
-		t.Fatalf("админ-дефолты неверны: %d/%d", rp, lp)
+		t.Fatalf("wrong admin defaults: %d/%d", rp, lp)
 	}
 	if rp, lp := applyRoleDefaults(true, 3000, 3001); rp != 3000 || lp != 3001 {
-		t.Fatal("явные пользовательские порты перезаписываются")
+		t.Fatal("explicit user ports were overwritten")
 	}
 }
 
 func TestGoSafeRecovers(t *testing.T) {
 	done := make(chan struct{})
-	goSafe("тест", func() {
+	goSafe("test", func() {
 		defer close(done)
-		panic("бум")
+		panic("boom")
 	})
 	select {
 	case <-done:
-		// паника проглочена — процесс жив
+		// panic swallowed — process alive
 	case <-time.After(3 * time.Second):
-		t.Fatal("goSafe не завершился")
+		t.Fatal("goSafe did not finish")
 	}
 }
 
@@ -350,10 +350,10 @@ func TestExecRawCommandQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// RawCommand доходит 1:1: двойной пробел внутри кавычек сохраняется
-	// (при shlex-rejoin он бы схлопнулся до одного пробела)
+	// RawCommand arrives 1:1: the double space inside quotes is preserved
+	// (a shlex-rejoin would have collapsed it to one space)
 	if !strings.Contains(string(out), "x  y") {
-		t.Fatalf("кавычки потерялись: %q", string(out))
+		t.Fatalf("quotes were lost: %q", string(out))
 	}
 }
 
@@ -364,7 +364,7 @@ func TestExecSpawnFailureExit127(t *testing.T) {
 
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
-		shell:               "нет_такого_шелла_12345",
+		shell:               "no_such_shell_12345",
 		allowedClientPubKey: pubLine,
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -387,6 +387,6 @@ func TestExecSpawnFailureExit127(t *testing.T) {
 	err = sess.Run("echo hi")
 	var ee *gossh.ExitError
 	if !errors.As(err, &ee) || ee.ExitStatus() != 127 {
-		t.Fatalf("ожидался exit 127, получено: %v", err)
+		t.Fatalf("expected exit 127, got: %v", err)
 	}
 }

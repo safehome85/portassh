@@ -10,17 +10,17 @@ import (
 	"golang.org/x/text/transform"
 )
 
-// setCmdLine задаёт сырую командную строку процесса без MSVCRT-экранирования
-// аргументов Go — единственный надёжный способ пробросить квотирование в cmd.
-// HideWindow: дочерняя консоль не мигает окном (родитель windowsgui).
+// setCmdLine sets the raw command line of the child process without Go's
+// MSVCRT argument escaping — the only reliable way to pass quoting through
+// to cmd. HideWindow: the child console never flashes (the parent is windowsgui).
 func setCmdLine(cmd *exec.Cmd, line string) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: line, HideWindow: true}
 }
 
-// oemDecoder конвертирует OEM-вывод cmd/powershell (CP866 на русской Windows)
-// в UTF-8 на лету, без спавна chcp. Безусловный CP866: подтверждено живым
-// туннелем (байты совпадают с CP866), компромисс — нативно-UTF-8 утилиты
-// будут перекодированы дважды.
+// oemDecoder converts cmd/powershell output from the OEM codepage (CP866 on
+// Russian Windows) to UTF-8. Unconditional CP866: verified against the live
+// tunnel byte-for-byte. Trade-off: tools emitting UTF-8 natively get decoded
+// twice — acceptable for the target fleet.
 func oemDecoder() transform.Transformer {
 	return charmap.CodePage866.NewDecoder()
 }

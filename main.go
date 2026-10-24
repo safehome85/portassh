@@ -1,5 +1,5 @@
-// portassh: portable SSH access without admin rights.
-// Runs an SSH server on loopback and a reverse tunnel to the relay host.
+// portassh: portable SSH access for Windows machines without admin rights.
+// Runs an SSH server on loopback and a reverse tunnel to a relay host.
 // All credentials are baked in at build time (baked.go): run and connect, nothing to set up.
 package main
 
@@ -33,7 +33,7 @@ type config struct {
 	relayPort           int
 	localPort           int
 	shell               string
-	role                string // "user" или "admin"
+	role                string // "user" or "admin"
 	allowedClientPubKey string
 }
 
@@ -41,18 +41,18 @@ const (
 	roleUser  = "user"
 	roleAdmin = "admin"
 
-	defaultRPortAdmin = 2201 // админ-экземпляр держит свой порт на relay
+	defaultRPortAdmin = 2201 // admin instance keeps its own relay port
 	defaultLPortAdmin = 2223
 )
 
 func main() {
 	log.SetFlags(log.Ltime)
-	relay := flag.String("relay", defaultRelay, "адрес relay-сервера host[:22]")
-	rport := flag.Int("rport", defaultRPort, "порт на relay (занят — берётся следующий)")
-	lport := flag.Int("lport", defaultLPort, "локальный порт SSH-сервера (только 127.0.0.1)")
-	shell := flag.String("shell", defaultShell(), "shell для сессий")
-	admin := flag.Bool("admin", false, "поднять админ-экземпляр (окно UAC, второй туннель: relay-порт 2201)")
-	elevated := flag.Bool("elevated", false, "(внутренний) экземпляр уже повышен через UAC")
+	relay := flag.String("relay", defaultRelay, "relay server address host[:22]")
+	rport := flag.Int("rport", defaultRPort, "port on the relay (if busy, the next one is taken)")
+	lport := flag.Int("lport", defaultLPort, "local port of the embedded SSH server (loopback only)")
+	shell := flag.String("shell", defaultShell(), "shell for sessions")
+	admin := flag.Bool("admin", false, "start an admin instance (UAC prompt, second tunnel: relay port 2201)")
+	elevated := flag.Bool("elevated", false, "(internal) instance already elevated via UAC")
 	flag.Parse()
 
 	role := roleUser
@@ -62,7 +62,7 @@ func main() {
 	}
 
 	if *admin && !isElevated() {
-		// перезапуск себя же через UAC; дальше работает повышенный экземпляр
+		// relaunch self with UAC; the elevated instance takes over from here
 		if err := elevateSelf("-elevated"); err != nil {
 			log.Print(err)
 			return
@@ -80,7 +80,7 @@ func main() {
 		allowedClientPubKey: allowedClientPubKey,
 	}
 
-	// лог в файл рядом с exe (при скрытом окне это единственный вывод)
+	// log next to the exe (with a hidden window this is the only visible output)
 	if lf, err := os.OpenFile(filepath.Join(exeDir(), "portassh.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		log.SetOutput(io.MultiWriter(os.Stderr, lf))
 	}
@@ -89,9 +89,9 @@ func main() {
 	}
 
 	fmt.Println("=== portassh ===")
-	fmt.Printf("Запущен (%s). Жду туннель через relay...\n", role)
+	fmt.Printf("Started (%s). Waiting for the relay tunnel...\n", role)
 
-	// рабочая папка = профиль пользователя: сюда scp/sftp кладут файлы
+	// working directory = user profile: this is where scp/sftp files land
 	if home, err := os.UserHomeDir(); err == nil {
 		_ = os.Chdir(home)
 	}
@@ -99,9 +99,9 @@ func main() {
 	go func() {
 		for {
 			if err := startServer(cfg); err != nil {
-				log.Printf("сервер: %v; перезапуск через 5с", err)
+				log.Printf("server: %v; restarting in 5s", err)
 			} else {
-				log.Print("сервер остановлен; перезапуск через 5с")
+				log.Print("server stopped; restarting in 5s")
 			}
 			time.Sleep(5 * time.Second)
 		}
@@ -119,8 +119,8 @@ func defaultShell() string {
 	return "/bin/sh"
 }
 
-// applyRoleDefaults: админ-экземпляр по умолчанию держит свои порты,
-// но явные пользовательские значения не трогает.
+// applyRoleDefaults: the admin instance keeps its own default ports,
+// but explicit user-provided values are left untouched.
 func applyRoleDefaults(adminOrElevated bool, rport, lport int) (int, int) {
 	if adminOrElevated {
 		if rport == defaultRPort {
@@ -136,56 +136,57 @@ func applyRoleDefaults(adminOrElevated bool, rport, lport int) (int, int) {
 // --- SSH server ---
 
 func startServer(cfg config) error {
-	log.Printf("SSH-сервер слушает %s", newServerAddr(cfg))
+	log.Printf("SSH server listening on %s", newServerAddr(cfg))
 	return newServer(cfg).ListenAndServe()
 }
 
 func newServerAddr(cfg config) string {
 	if cfg.relay == "" {
-		return fmt.Sprintf("0.0.0.0:%d", cfg.localPort) // без туннеля — для локальной сети; Windows спросит про фаервол
+		return fmt.Sprintf("0.0.0.0:%d", cfg.localPort) // no tunnel: LAN mode, Windows will ask about the firewall
 	}
 	return fmt.Sprintf("127.0.0.1:%d", cfg.localPort)
 }
 
-// samePubKey сравнивает строки authorized_keys по типу и base64 (без комментария).
+// samePubKey compares authorized_keys lines by type and base64 (ignoring comments).
 func samePubKey(a, b string) bool {
 	fa, fb := strings.Fields(string(a)), strings.Fields(string(b))
 	return len(fa) >= 2 && len(fb) >= 2 && fa[0] == fb[0] && fa[1] == fb[1]
 }
 
-// goSafe: паника в горутине не должна убивать весь процесс (ISSUES.md п.1) —
-// глотаем, пишем стек в лог, туннель и остальные сессии продолжают работать.
+// goSafe: a panic in a goroutine must never kill the whole process
+// (ISSUES.md #1) — swallow it, log the stack, keep the tunnel and other
+// sessions running.
 func goSafe(what string, fn func()) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("panic в %s: %v\n%s", what, r, debug.Stack())
+				log.Printf("panic in %s: %v\n%s", what, r, debug.Stack())
 			}
 		}()
 		fn()
 	}()
 }
 
-// safeHandler — то же для обработчиков SSH-сессий.
+// safeHandler — same for SSH session handlers.
 func safeHandler(h ssh.Handler) ssh.Handler {
 	return func(s ssh.Session) {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("panic в сессии: %v\n%s", r, debug.Stack())
-				fmt.Fprintf(s, "portassh: внутренняя ошибка сессии\r\n")
+				log.Printf("panic in session: %v\n%s", r, debug.Stack())
+				fmt.Fprintf(s, "portassh: internal session error\r\n")
 			}
 		}()
 		h(s)
 	}
 }
 
-// safeSubsys — обёртка для подсистем (sftp): тип SubsystemHandler отличается от Handler.
+// safeSubsys — wrapper for subsystem handlers (sftp): SubsystemHandler is a different type.
 func safeSubsys(h ssh.SubsystemHandler) ssh.SubsystemHandler {
 	return func(s ssh.Session) {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("panic в подсистеме: %v\n%s", r, debug.Stack())
-				fmt.Fprintf(s, "portassh: внутренняя ошибка подсистемы\r\n")
+				log.Printf("panic in subsystem: %v\n%s", r, debug.Stack())
+				fmt.Fprintf(s, "portassh: internal subsystem error\r\n")
 			}
 		}()
 		h(s)
@@ -199,7 +200,7 @@ func newServer(cfg config) *ssh.Server {
 		Handler:     safeHandler(sessionHandler(cfg)),
 		HostSigners: []ssh.Signer{hostSigner},
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{
-			"sftp": safeSubsys(sftpHandler), // scp/sftp: приём и отдача файлов без кавычечного ада
+			"sftp": safeSubsys(sftpHandler), // scp/sftp: file transfer without the quoting hell
 		},
 		PublicKeyHandler: func(_ ssh.Context, key ssh.PublicKey) bool {
 			return samePubKey(string(gossh.MarshalAuthorizedKey(key)), cfg.allowedClientPubKey)
@@ -223,24 +224,24 @@ func sftpHandler(s ssh.Session) {
 func sessionHandler(cfg config) ssh.Handler {
 	return func(s ssh.Session) {
 		if len(s.Command()) > 0 {
-			runExec(s, cfg, s.RawCommand()) // сырая строка клиента — кавычки не пересобираются
+			runExec(s, cfg, s.RawCommand()) // the client's raw string — quotes are never rebuilt
 			return
 		}
 		ptyReq, winCh, isPty := s.Pty()
 		if !isPty {
-			io.WriteString(s, "portassh: требуется PTY\n")
+			io.WriteString(s, "portassh: a PTY is required\n")
 			s.Exit(1)
 			return
 		}
-		// go-pty: на Windows это ConPTY (creack/pty Windows не поддерживает вовсе),
-		// на Unix — классический pty. Resize(width, height).
+		// go-pty: ConPTY on Windows (creack/pty has no Windows support at all),
+		// classic pty on Unix. Resize(width, height).
 		pt, err := gpty.New()
 		if err != nil {
 			io.WriteString(s, err.Error())
 			s.Exit(1)
 			return
 		}
-		// один-единственный Close: двойное закрытие ConPTY/пайпов недопустимо
+		// a single Close only: double-closing the ConPTY/pipes is not allowed
 		var closeOnce sync.Once
 		closePty := func() { closeOnce.Do(func() { _ = pt.Close() }) }
 		defer closePty()
@@ -273,33 +274,33 @@ func sessionHandler(cfg config) ssh.Handler {
 			_, _ = io.Copy(s, pt)
 		})
 		_ = cmd.Wait()
-		// ConPTY не отдаёт EOF при выходе процесса — дозаливаем хвост и закрываем
+		// ConPTY never signals EOF on process exit — drain the tail, then close
 		time.Sleep(300 * time.Millisecond)
 		closePty()
 		<-copyDone
 	}
 }
 
-// spawnRetryDelay — пауза между попытками запуска (ISSUES.md п.2: AV-блокировки
-// снимаются через 10–30 с). Переопределяется в тестах.
+// spawnRetryDelay — pause between spawn attempts (ISSUES.md #2: antivirus
+// blocks clear after 10-30 s). Overridden in tests.
 var spawnRetryDelay = 3 * time.Second
 
 func runExec(s ssh.Session, cfg config, raw string) {
-	// makeCmd: exec.Cmd можно запустить только один раз — пересобираем на каждую попытку.
+	// makeCmd: an exec.Cmd can only be Run once — rebuild for every attempt.
 	makeCmd := func() *exec.Cmd {
 		var cmd *exec.Cmd
 		if runtime.GOOS == "windows" {
 			if strings.EqualFold(cfg.shell, "cmd.exe") {
-				// Сырая командная строка через SysProcAttr.CmdLine: Go не применяет
-				// MSVCRT-экранирование к аргументам (ISSUES.md регрессия), и
-				// квотирование клиента доходит до cmd 1:1. /d отключает AutoRun.
+				// Raw command line via SysProcAttr.CmdLine: Go does not apply
+				// MSVCRT escaping to it (ISSUES.md regression), so the client's
+				// quoting reaches cmd 1:1. /d disables registry AutoRun.
 				cmd = exec.Command(cfg.shell)
 				setCmdLine(cmd, `cmd /d /s /c "`+raw+`"`)
 			} else {
 				cmd = exec.Command(cfg.shell, "/c", raw)
 			}
-			// вывод cmd/powershell идёт в OEM-кодировке (CP866 на русской Windows) —
-			// декодируем в UTF-8 на лету вместо спавна chcp
+			// cmd/powershell write their output in the OEM encoding (CP866 on
+			// Russian Windows) — decode to UTF-8 on the fly instead of spawning chcp
 			if dec := oemDecoder(); dec != nil {
 				out := transform.NewWriter(s, dec)
 				cmd.Stdout, cmd.Stderr = out, out
@@ -322,18 +323,18 @@ func runExec(s ssh.Session, cfg config, raw string) {
 		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			// команда стартовала и упала сама — ретраить бессмысленно
+			// the command started and failed on its own — no point retrying
 			s.Exit(ee.ExitCode())
 			return
 		}
-		// даже не запустилось (антивирус, права, нет файла) — ретраим и сообщаем
+		// it never even started (antivirus, permissions, missing file) — retry and report
 		lastErr = err
-		log.Printf("exec %q: попытка %d: %v", raw, attempt, err)
+		log.Printf("exec %q: attempt %d: %v", raw, attempt, err)
 		if attempt < 3 {
 			time.Sleep(spawnRetryDelay)
 		}
 	}
-	fmt.Fprintf(s, "portassh: не удалось запустить %q: %v\n", raw, lastErr)
+	fmt.Fprintf(s, "portassh: failed to start %q: %v\n", raw, lastErr)
 	s.Exit(127)
 }
 
@@ -346,9 +347,9 @@ func relayLoop(cfg config) {
 		chosen, err := relayOnce(cfg, port)
 		port = chosen
 		if err != nil {
-			log.Printf("tunnel: %v; повтор через %s", err, delay)
+			log.Printf("tunnel: %v; retrying in %s", err, delay)
 			time.Sleep(delay)
-			// экспоненциальный backoff с потолком 30с (ISSUES.md п.5)
+			// exponential backoff capped at 30 s (ISSUES.md #5)
 			if delay < 30*time.Second {
 				delay *= 2
 			}
@@ -373,7 +374,7 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 		User:              cfg.relayUser,
 		Auth:              []gossh.AuthMethod{gossh.PublicKeys(signer)},
 		HostKeyCallback:   gossh.FixedHostKey(hostKey),
-		HostKeyAlgorithms: []string{gossh.KeyAlgoED25519}, // запечён только ed25519-ключ relay
+		HostKeyAlgorithms: []string{gossh.KeyAlgoED25519}, // only the baked ed25519 relay key
 		Timeout:           10 * time.Second,
 	})
 	if err != nil {
@@ -394,7 +395,7 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 	local := fmt.Sprintf("127.0.0.1:%d", cfg.localPort)
 	var ln net.Listener
 	port := wantPort
-	for p := wantPort; p <= wantPort+99; p++ { // занят — пробуем следующий (до 100 машин)
+	for p := wantPort; p <= wantPort+99; p++ { // busy — try the next one (up to 100 machines)
 		port = p
 		ln, err = client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
 		if err == nil {
@@ -402,17 +403,17 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 		}
 	}
 	if err != nil {
-		return port, fmt.Errorf("remote listen: %w (запрещён проброс на relay?)", err)
+		return port, fmt.Errorf("remote listen: %w (port forwarding disabled on the relay?)", err)
 	}
 	defer ln.Close()
-	log.Printf("tunnel: подключено к %s как %s, проброс 127.0.0.1:%d -> %s",
+	log.Printf("tunnel: connected to %s as %s, forwarding 127.0.0.1:%d -> %s",
 		addr, cfg.relayUser, port, local)
 
 	cfg.relayPort = port
 	writeConnectionFile(cfg)
 	registerOnRelay(client, cfg)
 
-	fmt.Printf("\n=== ГОТОВО ===\nПодключение с вашего компьютера:\n  ssh -o StrictHostKeyChecking=accept-new -J root@%s -p %d anyuser@localhost\n",
+	fmt.Printf("\n=== READY ===\nConnect from your computer:\n  ssh -o StrictHostKeyChecking=accept-new -J root@%s -p %d anyuser@localhost\n",
 		cfg.relay, port)
 
 	acceptCh := make(chan net.Conn)
@@ -431,17 +432,31 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 	for {
 		select {
 		case err := <-waitCh:
-			return port, fmt.Errorf("relay закрыл соединение: %v", err)
+			return port, fmt.Errorf("relay closed the connection: %v", err)
 		case c, ok := <-acceptCh:
 			if !ok {
-				return port, fmt.Errorf("relay закрыл соединение")
+				return port, fmt.Errorf("relay closed the connection")
 			}
 			goSafe("forward", func() { forward(c, local) })
 		}
 	}
 }
 
-// --- delivery of connection info ---
+func forward(c net.Conn, target string) {
+	defer c.Close()
+	up, err := net.DialTimeout("tcp", target, 5*time.Second)
+	if err != nil {
+		log.Printf("forward: %v", err)
+		return
+	}
+	defer up.Close()
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(up, c); c.Close(); up.Close(); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(c, up); c.Close(); up.Close(); done <- struct{}{} }()
+	<-done
+}
+
+// --- connection info delivery ---
 
 func exeDir() string {
 	if exe, err := os.Executable(); err == nil {
@@ -463,13 +478,14 @@ func writeConnectionFile(cfg config) {
 	_ = os.WriteFile(p, []byte(connectCommand(cfg.relay, cfg.relayPort)+"\n"), 0o600)
 }
 
-// registryLine: "имя_ПК порт время роль" — порт всегда поле 2 (pconnectgo совместим).
+// registryLine: "PC_NAME port time role" — the port is always field 2
+// (keeps pconnectgo compatible).
 func registryLine(host string, port int, role string, when time.Time) string {
 	return fmt.Sprintf("%s %d %s %s", sanitizeLine(host), port, when.Format("02.01_15:04"), role)
 }
 
-// registerOnRelay дописывает строку в ~/online.txt на relay, чтобы видеть
-// список машин и их ролей одной командой со своего компьютера.
+// registerOnRelay appends a line to ~/online.txt on the relay so the list of
+// machines and their roles can be checked with a single command.
 func registerOnRelay(client *gossh.Client, cfg config) {
 	host, err := os.Hostname()
 	if err != nil {
@@ -492,20 +508,6 @@ func sanitizeLine(s string) string {
 		}
 		return -1
 	}, s)
-}
-
-func forward(c net.Conn, target string) {
-	defer c.Close()
-	up, err := net.DialTimeout("tcp", target, 5*time.Second)
-	if err != nil {
-		log.Printf("forward: %v", err)
-		return
-	}
-	defer up.Close()
-	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(up, c); c.Close(); up.Close(); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(c, up); c.Close(); up.Close(); done <- struct{}{} }()
-	<-done
 }
 
 // --- baked credentials ---

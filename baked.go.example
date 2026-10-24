@@ -1,38 +1,38 @@
 package main
 
-// ШАБЛОН: скопируйте в baked.go (он в .gitignore — приватные ключи не
-// попадают в репозиторий) и заполните своими значениями.
+// TEMPLATE: copy to baked.go (it is gitignored — private keys must never
+// reach the repository) and fill in your own values.
 //
-// Генерация ключей:
+// Key generation:
 //   ssh-keygen -t ed25519 -N '' -f relay_ed25519 -C portassh-relay
 //   ssh-keygen -t ed25519 -N '' -f host_ed25519  -C portassh-host
-//   base64 < relay_ed25519  -> relayPrivKeyB64  (приватный ключ туннеля)
-//   base64 < host_ed25519   -> serverHostKeyB64 (приватный host key сервера)
+//   base64 < relay_ed25519  -> relayPrivKeyB64  (private tunnel key)
+//   base64 < host_ed25519   -> serverHostKeyB64 (private server host key)
 //
-// Настройка relay (любой SSH-сервер, например VPS):
+// Relay setup (any SSH server, e.g. a VPS):
 //   1. useradd -m -s /bin/sh portassh
 //   2. echo "$(cat relay_ed25519.pub)" > /home/portassh/.ssh/authorized_keys
-//   3. ssh-keyscan -t ed25519 <relay-ip>  -> первая часть relayHostKeyLine
+//   3. ssh-keyscan -t ed25519 <relay-ip>  -> first part of relayHostKeyLine
 //
-// Ключ клиента (allowedClientPubKey): строка из ~/.ssh/id_ed25519.pub
-// машины, С КОТОРОЙ будете подключаться.
+// Client key (allowedClientPubKey): the line from ~/.ssh/id_ed25519.pub of
+// the machine you will connect FROM.
 
 const (
-	defaultRelay     = "ВАШ_RELAY_HOST[:22]"
+	defaultRelay     = "YOUR_RELAY_HOST[:22]"
 	defaultRelayUser = "portassh"
 	defaultLPort     = 2222
 	defaultRPort     = 2200
 
-	// приватный ed25519-ключ туннеля к relay, base64 (PKCS8/OpenSSH PEM)
-	relayPrivKeyB64 = "BASE64_ПРИВАТНЫЙ_КЛЮЧ"
+	// private ed25519 tunnel key, base64 (PKCS8/OpenSSH PEM)
+	relayPrivKeyB64 = "BASE64_PRIVATE_KEY"
 
-	// host key relay-сервера в формате known_hosts: "host ssh-ed25519 AAAA..."
+	// relay host key in known_hosts format: "host ssh-ed25519 AAAA..."
 	relayHostKeyLine = "RELAY_IP ssh-ed25519 AAAA..."
 
-	// приватный host key встроенного SSH-сервера, base64
-	serverHostKeyB64 = "BASE64_HOST_КЛЮЧ"
-	serverHostPub    = "ssh-ed25519 AAAA... (для known_hosts клиентов)"
+	// private host key of the embedded SSH server, base64
+	serverHostKeyB64 = "BASE64_HOST_KEY"
+	serverHostPub    = "ssh-ed25519 AAAA... (for client known_hosts)"
 
-	// единственный клиентский ключ, принимаемый встроенным сервером
-	allowedClientPubKey = "ssh-ed25519 AAAA... ваш@клиент"
+	// the only client key accepted by the embedded server
+	allowedClientPubKey = "ssh-ed25519 AAAA... you@client"
 )
