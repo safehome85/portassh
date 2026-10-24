@@ -497,7 +497,8 @@ func registerOnRelay(client *gossh.Client, cfg config) {
 		return
 	}
 	defer sess.Close()
-	_ = sess.Run(fmt.Sprintf("echo '%s' >> ~/online.txt", line))
+	// umask 022: реестр читается веб-дашбордом на том же VPS
+	_ = sess.Run(fmt.Sprintf("umask 022 && echo '%s' >> ~/online.txt", line))
 }
 
 func sanitizeLine(s string) string {
