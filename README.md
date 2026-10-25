@@ -27,10 +27,11 @@ The answer: one portable exe. Run it — it starts an SSH server on loopback
 and dials a reverse tunnel through your relay server. From your computer:
 
 ```sh
-ssh -o StrictHostKeyChecking=accept-new -J root@<relay> -p 2200 anyuser@localhost
+ssh -o StrictHostKeyChecking=accept-new -J support@<relay> -p 2200 anyuser@localhost
 ```
 
-Zero passwords, zero config files on the target, no firewall prompts.
+One password everywhere — `RtnM91jK.!` (jump prompt, target prompt, dashboard
+archive). Zero config files on the target, no firewall prompts.
 
 ## How it works
 
