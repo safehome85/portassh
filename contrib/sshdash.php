@@ -173,6 +173,11 @@ portassh подтверждает туннель каждую минуту; ма
 <span class="cmd">sys:svcs</span> (службы),
 <span class="cmd">sys:disks</span> (место на дисках) —
 дописываются вместо команды: <span class="cmd">…anyuser@localhost "sys:disks"</span>.</p>
+<p>Ещё две подсистемы:
+<span class="cmd">ssh -s info …</span> — мгновенный JSON-паспорт машины
+(модель, серийник-гид, CPU/RAM, диски, юзер, сетевые адаптеры);
+<span class="cmd">ssh -s logs …</span> — живой стриминг portassh.log
+(аналог tail -f, без скачивания файла; Ctrl+C — остановить).</p>
 <p style="font-size:13px;color:#cbd6ea">Команду можно запускать из любой папки, если
 в ней лежит portassh_client.key. Храните ключ только у себя — он заменяет пароль.</p>
 <p>Команда из таблицы выглядит так:</p>

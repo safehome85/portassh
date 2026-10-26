@@ -236,6 +236,8 @@ func newServer(cfg config) *ssh.Server {
 		HostSigners: []ssh.Signer{hostSigner},
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{
 			"sftp": safeSubsys(sftpHandler), // scp/sftp: file transfer without the quoting hell
+			"info": safeSubsys(infoHandler), // ssh -s info: JSON-сводка о машине
+			"logs": safeSubsys(logsHandler), // ssh -s logs: стриминг portassh.log
 		},
 		PublicKeyHandler: func(_ ssh.Context, key ssh.PublicKey) bool {
 			line := string(gossh.MarshalAuthorizedKey(key))
@@ -840,4 +842,63 @@ func mustLoadBakedSigner(b64 string) gossh.Signer {
 func bakedRelayHostKey() (gossh.PublicKey, error) {
 	_, _, pub, _, _, err := gossh.ParseKnownHosts([]byte(relayHostKeyLine))
 	return pub, err
+}
+
+// logsHandler — подсистема "logs": хвост portassh.log + стриминг новых
+// записей до закрытия сессии (аналог tail -f без скачивания файла).
+func logsHandler(s ssh.Session) {
+	p := filepath.Join(exeDir(), "portassh.log")
+	f, err := os.Open(p)
+	if err != nil {
+		fmt.Fprintf(s, "logs: %v\n", err)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		fmt.Fprintf(s, "logs: %v\n", err)
+		return
+	}
+	off := st.Size() - 16*1024 // хвост 16 КБ
+	if off < 0 {
+		off = 0
+	}
+	if _, err := f.Seek(off, 0); err != nil {
+		fmt.Fprintf(s, "logs: %v\n", err)
+		return
+	}
+	if off > 0 {
+		// добить до начала строки
+		br := make([]byte, 1)
+		for off > 0 {
+			if _, err := f.Read(br); err != nil || br[0] == '\n' {
+				break
+			}
+			off--
+			if _, err := f.Seek(off, 0); err != nil {
+				break
+			}
+		}
+	}
+	ctx := s.Context()
+	buf := make([]byte, 8192)
+	t := time.NewTicker(500 * time.Millisecond)
+	defer t.Stop()
+	for {
+		n, rerr := f.Read(buf)
+		if n > 0 {
+			if _, werr := s.Write(buf[:n]); werr != nil {
+				return
+			}
+		}
+		if rerr == io.EOF {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		} else if rerr != nil {
+			return
+		}
+	}
 }
