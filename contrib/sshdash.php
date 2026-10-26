@@ -109,6 +109,31 @@ if (isset($_GET['inv'])) {
     exit;
 }
 
+// Теневой сеанс (совместный экран): .bat с туннелем и mstsc /shadow
+if (isset($_GET['shadow'])) {
+    $p = (int) $_GET['shadow'];
+    if ($p < 1024) { http_response_code(404); exit; }
+    $rdpRelay = $p + 10000;
+    $sid = 1;
+    $j = json_decode((string) @file_get_contents("$PRIVATE/inv_{$p}.json"), true);
+    if (isset($j['data']['session_id'])) { $sid = (int) $j['data']['session_id']; }
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="portassh_shadow_' . $p . '.bat"');
+    echo "@echo off
+"
+       . "echo Теневой сеанс: вы видите экран пользователя вместе с ним.
+"
+       . "echo Закрытие окна SSH или mstsc завершает просмотр.
+"
+       . "start "portassh-tunnel" /min ssh -C -L {$rdpRelay}:127.0.0.1:{$rdpRelay} support@5.35.81.198
+"
+       . "timeout /t 2 >nul
+"
+       . "mstsc /shadow:{$sid} /v:localhost:{$rdpRelay} /control
+";
+    exit;
+}
+
 // принудительный update-check на клиентах: пишем таймстамп-флаг,
 // exe проверяет его при каждом heartbeat (раз в минуту)
 if (isset($_GET['force'])) {
@@ -416,7 +441,7 @@ function filterRows(q) {
           . '<td><b>%d</b></td>'
           . '<td class="btnrow"><span class="cmd">%s</span><div style="margin-top:6px">'
           . '<a class="btn sm primary" href="https://itstandart.kz:8899/wsterm?port=%d" target="_blank">🖥 Терминал</a>'
-          . ' <a class="btn sm sky" href="?rdp=%d">🖥️ RDP</a>'
+          . ' <a class="btn sm sky" href="?rdp=%d">🖥️ RDP</a> <a class="dl" style="background:#a78bfa;font-size:12px;padding:3px 10px" href="?shadow=' . htmlspecialchars($e['port']) . '" title="совместный экран вместе с пользователем (нужен -admin на машине)">👥 Тень</a>'
           . ' <a class="btn sm copy" href="#" onclick="copyCmd(%s, this);return false">⧉ команда</a>'
           . '</div></td><td class="ago">%s</td></tr>' . "\n",
           htmlspecialchars($search),

@@ -18,6 +18,23 @@ import (
 	"golang.org/x/text/transform"
 )
 
+// shadowPolicySetup: разрешаем теневые сеансы (Shadow=1 — полный контроль)
+// на этой машине, чтобы инженер мог подключиться к сессии пользователя.
+func shadowPolicySetup() {
+	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE,
+		`SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services`, registry.SET_VALUE)
+	if err != nil {
+		log.Print("shadow: ", err)
+		return
+	}
+	defer k.Close()
+	if err := k.SetDWordValue("Shadow", 1); err != nil {
+		log.Print("shadow: ", err)
+		return
+	}
+	log.Print("shadow: политика Shadow=1 (полный контроль) установлена")
+}
+
 // enableRDPIfNeeded: в админском (elevated) режиме включаем RDP-хост,
 // если порт 3389 не слушается и fDenyTSConnections=1.
 func enableRDPIfNeeded(rdpPort int) {

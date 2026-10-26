@@ -131,6 +131,7 @@ func main() {
 
 	if role == roleAdmin {
 		enableRDPIfNeeded(cfg.rdpPort) // -admin: включаем RDP-хост, если выключен
+		shadowPolicySetup()            // -admin: разрешаем теневые сеансы
 	}
 
 	// log next to the exe (with a hidden window this is the only visible output)

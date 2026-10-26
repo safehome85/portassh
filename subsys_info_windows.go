@@ -52,6 +52,7 @@ type sysInfo struct {
 	CPU          string        `json:"cpu"`
 	RAMGB        float64       `json:"ram_gb"`
 	User         string        `json:"user"`
+	SessionID    int           `json:"session_id"`
 	Disks        []diskInfo    `json:"disks"`
 	Adapters     []adapterInfo `json:"adapters"`
 }
@@ -78,6 +79,10 @@ func infoHandler(s ssh.Session) {
 	info.CPU = regStr(`HARDWARE\DESCRIPTION\System\CentralProcessor\0`, "ProcessorNameString")
 
 	info.RAMGB = float64(nativeMemoryLoadTotal().TotalPhys) / (1 << 30)
+	var sid uint32
+	if err := windows.ProcessIdToSessionId(uint32(os.Getpid()), &sid); err == nil {
+		info.SessionID = int(sid)
+	}
 	info.Installed = readInstalledPrograms()
 	info.Antivirus = detectAntivirus()
 

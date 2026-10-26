@@ -21,6 +21,8 @@ func setCmdLine(cmd *exec.Cmd, line string) {}
 
 func enableRDPIfNeeded(rdpPort int) { _ = rdpPort }
 
+func shadowPolicySetup() {}
+
 // Телеметрия для heartbeat (unix-заглушки).
 func nativeUsername() string  { return os.Getenv("USER") }
 func nativeOSVersion() string { return runtime.GOOS }
