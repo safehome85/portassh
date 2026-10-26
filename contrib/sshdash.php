@@ -197,6 +197,55 @@ if (isset($_GET['getfile'])) {
     exit;
 }
 
+// AI: конфигурация моделей и ключей
+if (isset($_GET['ai_config'])) {
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/ai/config', false, stream_context_create(['http' => ['timeout' => 5]]));
+    exit;
+}
+
+// AI: сбор событий Windows
+if (isset($_GET['events'])) {
+    $p = (int) $_GET['events'];
+    $ch = urlencode((string)($_GET['ch'] ?? 'System'));
+    if ($p < 1024) { http_response_code(404); exit; }
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/events?port=' . $p . '&channel=' . $ch, false, stream_context_create(['http' => ['timeout' => 20]]));
+    exit;
+}
+
+// AI: анализ журнала событий
+if (isset($_GET['ai_explain_events'])) {
+    $body = file_get_contents('php://input');
+    header('Content-Type: application/json');
+    $ctx = stream_context_create(['http' => [
+        'method' => 'POST',
+        'timeout' => 90,
+        'header' => "Content-Type: application/json\r\nContent-Length: " . strlen($body),
+        'content' => $body,
+    ]]);
+    $raw = @file_get_contents('http://127.0.0.1:8897/ai/explain-events', false, $ctx);
+    if ($raw === false) { http_response_code(502); exit(json_encode(['error' => 'AI server unreachable'])); }
+    echo $raw;
+    exit;
+}
+
+// AI: SysAdmin Copilot чат с Tool Calling
+if (isset($_GET['ai_chat'])) {
+    $body = file_get_contents('php://input');
+    header('Content-Type: application/json');
+    $ctx = stream_context_create(['http' => [
+        'method' => 'POST',
+        'timeout' => 120,
+        'header' => "Content-Type: application/json\r\nContent-Length: " . strlen($body),
+        'content' => $body,
+    ]]);
+    $raw = @file_get_contents('http://127.0.0.1:8897/ai/chat', false, $ctx);
+    if ($raw === false) { http_response_code(502); exit(json_encode(['error' => 'AI server unreachable'])); }
+    echo $raw;
+    exit;
+}
+
 // Питание: перезагрузка / выключение / блокировка
 if (isset($_GET['power'])) {
     $p = (int) $_GET['power'];
@@ -352,8 +401,8 @@ foreach ($lines as $line) {
     $osv  = isset($p[5]) && $p[5] !== '-' ? $p[5] : '';
     $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
     $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
-    $ver  = isset($p[8]) && $p[8] !== '-' ? $p[8] : '';
-    $upt  = isset($p[9]) && $p[9] !== '-' && (int)$p[9] >= 0 ? (int)$p[9] : null;
+    $upt  = isset($p[8]) && $p[8] !== '-' && (int)$p[8] >= 0 ? (int)$p[8] : null;
+    $ver  = isset($p[9]) && $p[9] !== '-' ? $p[9] : '';
     $alias = isset($aliases[$host]) ? $aliases[$host] : null;
     $meta = [];
     if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
@@ -562,6 +611,7 @@ function filterRows(q) {
     <div class="sub">пульт дежурного · автообновление 20 с · актуальная сборка <b><?= $LATEST_NAME !== '' ? 'ver. ' . htmlspecialchars($LATEST_NAME) : '?' ?></b></div>
   </div>
   <div class="actions">
+    <button class="btn" style="background:#7c3aed;color:#fff;border-color:#6d28d9" onclick="toggleAICopilot()" title="AI SysAdmin Copilot">🤖 AI Copilot</button>
     <a class="btn" href="?dl=zip">⬇ .zip</a>
     <a class="btn" href="?dl=bin">⬇ .bin</a>
     <a class="btn" href="?dl=key">🔑 Ключ</a>
@@ -633,6 +683,7 @@ function filterRows(q) {
                . ' <a class="btn sm" href="#" onclick="openProcs(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="диспетчер задач">📊 Процессы</a>'
                . ' <a class="btn sm" href="?shadow=' . (int) $e['port'] . '" title="совместный экран">👥 Тень</a>'
                . ' <a class="btn sm" href="#" onclick="openSvc(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="службы">⚙ Службы</a>'
+               . ' <a class="btn sm" href="#" onclick="openEvents(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="журнал событий Windows">📋 События</a>'
                . ' <a class="btn sm" href="#" onclick="openScreen(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="экран в браузере">🖼 Экран</a>'
                . ' <a class="btn sm" href="#" onclick="openPower(event, ' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="питание">⏻ Питание</a>'
                . ' <a class="btn sm" href="#" onclick="openFiles(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="файлы машины">📁 Файлы</a>'
@@ -834,10 +885,13 @@ foreach ($invPorts as $p => $inv) {
 <tr><td>🖥 Терминал</td><td>командная строка машины прямо в браузере</td></tr>
 <tr><td>📊 Процессы</td><td>диспетчер задач: поиск, память, «снять задачу»</td></tr>
 <tr><td>⚙ Службы</td><td>запуск/остановка/перезапуск служб Windows</td></tr>
+<tr><td>📋 События</td><td>журнал событий Windows (System / Application) + анализ сбоев через AI</td></tr>
 <tr><td>🖥️ RDP</td><td>скачать .rdp — удалённый рабочий стол (нужен RDP-туннель, см. ниже)</td></tr>
 <tr><td>👥 Тень</td><td>видеть экран пользователя и управлять вместе с ним (.bat + mstsc)</td></tr>
 <tr><td>🖼 Экран</td><td>экран машины прямо в браузере: клики, перетаскивание, скролл, печать текста</td></tr>
 <tr><td>📁 Файлы</td><td>закинуть файл на машину / скачать с машины</td></tr>
+<tr><td>⏻ Питание</td><td>перезагрузка / выключение / блокировка экрана</td></tr>
+<tr><td>🤖 AI Copilot</td><td>умный помощник: исследование флота и диагностика через OpenRouter / Google AI</td></tr>
 <tr><td>⧉ команда</td><td>скопировать SSH-команду для своего терминала</td></tr>
 <tr><td>✏️</td><td>метка и заметка машине («Бухгалтер Иванова»)</td></tr>
 </table>
@@ -1199,6 +1253,328 @@ function svcAct(act, name) {
   fetch('?svc=' + svcPort + '&act=' + act + '&name=' + encodeURIComponent(name))
     .then(r => r.json()).then(() => svLoad());
 }
+
+// ---- AI Events Modal ----
+let evPort = 0, evHost = '', evChannel = 'System', evRawText = '';
+
+function openEvents(port, host) {
+  evPort = port; evHost = host; evChannel = 'System';
+  document.getElementById('evhost').textContent = host;
+  document.getElementById('eventsmodal').style.display = 'block';
+  document.getElementById('evaibox').style.display = 'none';
+  evSetChannel('System');
+}
+function closeEvents() { document.getElementById('eventsmodal').style.display = 'none'; }
+
+function evSetChannel(ch) {
+  evChannel = ch;
+  document.getElementById('evbtn-sys').className = 'tabbtn' + (ch === 'System' ? ' active' : '');
+  document.getElementById('evbtn-app').className = 'tabbtn' + (ch === 'Application' ? ' active' : '');
+  evLoad();
+}
+
+function evLoad() {
+  const el = document.getElementById('evraw');
+  el.textContent = 'чтение журнала ' + evChannel + ' через wevtutil…';
+  fetch('?events=' + evPort + '&ch=' + evChannel)
+    .then(r => r.json())
+    .then(j => {
+      evRawText = j.raw || 'нет записей';
+      el.textContent = evRawText;
+    })
+    .catch(() => { el.textContent = 'ошибка получения событий'; });
+}
+
+function evAIAnalyze() {
+  if (!evRawText || evRawText.startsWith('чтение журнала')) {
+    alert('Сначала загрузите события');
+    return;
+  }
+  const box = document.getElementById('evaibox');
+  const cnt = document.getElementById('evaicontent');
+  box.style.display = 'flex';
+  cnt.innerHTML = '<div style="color:#7c3aed;padding:12px">🤖 Анализирую журнал ' + evChannel + ' через AI…</div>';
+
+  const prov = localStorage.getItem('pssh_ai_prov') || 'openrouter';
+  const model = localStorage.getItem('pssh_ai_model_' + prov) || (prov === 'google' ? 'gemini-2.0-flash-exp' : 'meta-llama/llama-3.3-70b-instruct:free');
+  const key = localStorage.getItem('pssh_ai_key_' + prov) || '';
+
+  fetch('?ai_explain_events=1', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: prov,
+      model: model,
+      api_key: key,
+      port: evPort,
+      channel: evChannel,
+      events: evRawText
+    })
+  })
+  .then(r => r.json())
+  .then(j => {
+    if (j.error) {
+      cnt.innerHTML = '<div style="color:#dc2626">Ошибка AI: ' + j.error + '</div>';
+    } else {
+      cnt.innerHTML = '<div style="font-size:11.5px;color:#64748b;margin-bottom:8px">Модель: <b>' + (j.model || model) + '</b></div>' + renderMarkdown(j.analysis);
+    }
+  })
+  .catch(err => {
+    cnt.innerHTML = '<div style="color:#dc2626">Ошибка запроса к AI: ' + err + '</div>';
+  });
+}
+
+// ---- AI SysAdmin Copilot ----
+const aiModelsMap = {
+  openrouter: [
+    { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B [Free]' },
+    { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash [Free]' },
+    { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 [Free]' },
+    { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen 2.5 Coder 32B [Free]' },
+    { id: 'mistralai/mistral-small-24b-instruct-2501:free', name: 'Mistral Small 24B [Free]' }
+  ],
+  google: [
+    { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (AI Studio)' },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (AI Studio)' },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (AI Studio)' },
+    { id: 'gemini-2.0-flash-thinking-exp-1219', name: 'Gemini 2.0 Flash Thinking' }
+  ]
+};
+
+let aiChatHistory = [];
+let aiBusy = false;
+
+function toggleAICopilot() {
+  const el = document.getElementById('aicopilot');
+  const isHidden = el.style.display === 'none' || el.style.display === '';
+  el.style.display = isHidden ? 'flex' : 'none';
+  if (isHidden) {
+    aiInitSelectors();
+    document.getElementById('aiinput').focus();
+  }
+}
+
+function aiInitSelectors() {
+  const provSel = document.getElementById('aiprov');
+  const curProv = localStorage.getItem('pssh_ai_prov') || 'openrouter';
+  provSel.value = curProv;
+  aiUpdateModels();
+}
+
+function aiProvChanged() {
+  const prov = document.getElementById('aiprov').value;
+  localStorage.setItem('pssh_ai_prov', prov);
+  aiUpdateModels();
+}
+
+function aiUpdateModels() {
+  const prov = document.getElementById('aiprov').value;
+  const modSel = document.getElementById('aimodel');
+  modSel.innerHTML = '';
+  const list = aiModelsMap[prov] || [];
+  const savedMod = localStorage.getItem('pssh_ai_model_' + prov) || (list[0] ? list[0].id : '');
+  list.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.name;
+    if (m.id === savedMod) opt.selected = true;
+    modSel.appendChild(opt);
+  });
+  const optCustom = document.createElement('option');
+  optCustom.value = '__custom__';
+  optCustom.textContent = '✏️ Своя модель…';
+  modSel.appendChild(optCustom);
+  aiCheckKeyNotice();
+}
+
+function aiModelChanged() {
+  const prov = document.getElementById('aiprov').value;
+  const modSel = document.getElementById('aimodel');
+  if (modSel.value === '__custom__') {
+    const custom = prompt('Введите ID модели OpenRouter / Google AI:', localStorage.getItem('pssh_ai_model_' + prov) || '');
+    if (custom && custom.trim()) {
+      localStorage.setItem('pssh_ai_model_' + prov, custom.trim());
+      aiUpdateModels();
+      modSel.value = custom.trim();
+    } else {
+      aiUpdateModels();
+    }
+    return;
+  }
+  localStorage.setItem('pssh_ai_model_' + prov, modSel.value);
+}
+
+function aiConfigureKey() {
+  const prov = document.getElementById('aiprov').value;
+  const curKey = localStorage.getItem('pssh_ai_key_' + prov) || '';
+  const promptName = prov === 'google' ? 'Google AI Studio API Key (GEMINI_API_KEY)' : 'OpenRouter API Key (sk-or-v1-...)';
+  const key = prompt('Введите ' + promptName + ':\n(Ключ сохраняется локально в вашем браузере)', curKey);
+  if (key !== null) {
+    localStorage.setItem('pssh_ai_key_' + prov, key.trim());
+    aiCheckKeyNotice();
+  }
+}
+
+function aiCheckKeyNotice() {
+  const prov = document.getElementById('aiprov').value;
+  const key = localStorage.getItem('pssh_ai_key_' + prov) || '';
+  const btn = document.getElementById('aikeybtn');
+  btn.style.color = key ? '#10b981' : '#f59e0b';
+  btn.title = key ? 'API-ключ задан (нажмите для смены)' : 'Задать API-ключ (если не задан на сервере)';
+}
+
+function aiAppendMsg(role, html, toolsUsed) {
+  const box = document.getElementById('aimessages');
+  const div = document.createElement('div');
+  div.style.cssText = 'margin:6px 0;max-width:92%;' + (role === 'user' ? 'margin-left:auto;text-align:right' : 'margin-right:auto;text-align:left');
+  
+  let toolsHtml = '';
+  if (toolsUsed && toolsUsed.length) {
+    toolsHtml = '<div style="font-size:11px;color:#6d28d9;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;padding:4px 8px;margin-bottom:6px;text-align:left">'
+      + '🛠 <b>Выполнены инструменты:</b><ul style="margin:2px 0 2px 16px;padding:0">'
+      + toolsUsed.map(t => '<li><code>' + t.tool + '</code>(' + (t.args ? t.args.slice(0, 40) : '') + ')</li>').join('')
+      + '</ul></div>';
+  }
+
+  const bubble = document.createElement('div');
+  bubble.style.cssText = 'display:inline-block;padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.45;text-align:left;'
+    + (role === 'user' ? 'background:#4f46e5;color:#fff;border-bottom-right-radius:2px' : 'background:#f1f5f9;color:#0f172a;border-bottom-left-radius:2px;border:1px solid #e2e8f0');
+  bubble.innerHTML = toolsHtml + html;
+  div.appendChild(bubble);
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function aiSend(text) {
+  if (aiBusy) return;
+  const input = document.getElementById('aiinput');
+  text = text || (input ? input.value : '');
+  if (!text || !text.trim()) return;
+  if (input) input.value = '';
+
+  aiAppendMsg('user', text.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+  aiChatHistory.push({ role: 'user', content: text });
+
+  const prov = document.getElementById('aiprov').value;
+  const modSel = document.getElementById('aimodel');
+  const model = modSel.value === '__custom__' ? (localStorage.getItem('pssh_ai_model_' + prov) || '') : modSel.value;
+  const key = localStorage.getItem('pssh_ai_key_' + prov) || '';
+
+  const loadDiv = document.createElement('div');
+  loadDiv.id = 'ailoading';
+  loadDiv.style.cssText = 'font-size:12px;color:#7c3aed;margin:6px 0;display:flex;align-items:center;gap:6px';
+  loadDiv.innerHTML = '<span class="dot"></span> Copilot думает и опрашивает флот…';
+  document.getElementById('aimessages').appendChild(loadDiv);
+  document.getElementById('aimessages').scrollTop = document.getElementById('aimessages').scrollHeight;
+
+  aiBusy = true;
+  fetch('?ai_chat=1', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: prov,
+      model: model,
+      api_key: key,
+      messages: aiChatHistory
+    })
+  })
+  .then(r => r.json())
+  .then(j => {
+    loadDiv.remove();
+    aiBusy = false;
+    if (j.error) {
+      aiAppendMsg('assistant', '<span style="color:#dc2626">Ошибка: ' + j.error + '</span>');
+    } else {
+      aiChatHistory.push({ role: 'assistant', content: j.reply });
+      aiAppendMsg('assistant', renderMarkdown(j.reply), j.tools_used);
+    }
+  })
+  .catch(err => {
+    loadDiv.remove();
+    aiBusy = false;
+    aiAppendMsg('assistant', '<span style="color:#dc2626">Сетевой сбой: ' + err + '</span>');
+  });
+}
+
+function aiQuickChip(promptText) {
+  aiSend(promptText);
+}
+
+function renderMarkdown(md) {
+  if (!md) return '';
+  return md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/```([\s\S]*?)```/g, '<pre style="background:#0f172a;color:#f8fafc;padding:8px 10px;border-radius:6px;font-size:12px;overflow-x:auto;margin:6px 0"><code>$1</code></pre>')
+    .replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;color:#e11d48;padding:2px 5px;border-radius:4px;font-size:12px">$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\*([^*]+)\*/g, '<i>$1</i>')
+    .replace(/\n\n/g, '<br><br>')
+    .replace(/\n- /g, '<br>• ');
+}
+</script>
+
+<!-- Модальное окно журнала событий Windows -->
+<div id="eventsmodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:60" onclick="if(event.target===this)closeEvents()">
+  <div style="background:#fff;max-width:860px;margin:32px auto;border-radius:12px;padding:18px 20px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 16px 40px rgba(0,0,0,.25)">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px">
+      <b>📋 Журнал событий Windows — <span id="evhost"></span></b>
+      <a href="#" onclick="closeEvents();return false" style="text-decoration:none;font-size:18px">✕</a>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <div style="display:flex;gap:6px">
+        <button id="evbtn-sys" class="tabbtn active" style="padding:4px 12px;font-size:12.5px" onclick="evSetChannel('System')">System (Система)</button>
+        <button id="evbtn-app" class="tabbtn" style="padding:4px 12px;font-size:12.5px" onclick="evSetChannel('Application')">Application (Приложения)</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn sm" onclick="evLoad()">⟳ Обновить</button>
+        <button class="btn sm" style="background:#7c3aed;color:#fff" onclick="evAIAnalyze()">🤖 AI-Анализ сбоев</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:14px;flex:1;overflow:hidden">
+      <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+        <div style="font-size:12px;color:#64748b;margin-bottom:4px">События (wevtutil: Critical / Error):</div>
+        <pre id="evraw" style="flex:1;background:#0f172a;color:#f8fafc;padding:12px;border-radius:8px;font-size:11px;overflow-y:auto;white-space:pre-wrap;margin:0"></pre>
+      </div>
+      <div id="evaibox" style="flex:1.1;display:none;flex-direction:column;border-left:1px solid #e2e8f0;padding-left:14px;min-width:0">
+        <div style="font-size:12px;color:#7c3aed;font-weight:700;margin-bottom:4px">Диагноз и рекомендации AI:</div>
+        <div id="evaicontent" style="flex:1;overflow-y:auto;font-size:13px;line-height:1.55;color:#1e293b;padding-right:4px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Плавающий AI SysAdmin Copilot -->
+<div id="aicopilot" style="display:none;position:fixed;bottom:20px;right:20px;width:440px;height:600px;background:#fff;border:1px solid #cbd5e1;border-radius:14px;box-shadow:0 16px 40px rgba(15,23,42,.22);z-index:90;flex-direction:column;overflow:hidden">
+  <div style="background:#4f46e5;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+    <div style="font-weight:700;font-size:14px">🤖 AI SysAdmin Copilot</div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button id="aikeybtn" onclick="aiConfigureKey()" style="background:none;border:none;cursor:pointer;font-size:15px;color:#f59e0b" title="Настройки API-ключа">🔑</button>
+      <a href="#" onclick="toggleAICopilot();return false" style="color:#fff;text-decoration:none;font-size:16px">✕</a>
+    </div>
+  </div>
+  <div style="background:#f8fafc;padding:6px 12px;border-bottom:1px solid #e2e8f0;display:flex;gap:6px;align-items:center">
+    <select id="aiprov" onchange="aiProvChanged()" style="font-size:11.5px;padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;background:#fff">
+      <option value="openrouter">OpenRouter (Free models)</option>
+      <option value="google">Google AI Studio (Gemini)</option>
+    </select>
+    <select id="aimodel" onchange="aiModelChanged()" style="font-size:11.5px;padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;flex:1;min-width:0">
+    </select>
+  </div>
+  <div id="aimessages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;background:#fafafa">
+    <div style="font-size:12.5px;color:#64748b;background:#f1f5f9;border-radius:8px;padding:10px;margin-bottom:8px">
+      👋 Привет! Я ваш AI-ассистент по флоту portassh. У меня есть доступ к процессам, службам, дискам, инвентарю и ошибкам журналов Windows. Спросите меня о состоянии машин!
+    </div>
+  </div>
+  <div style="padding:4px 10px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;gap:6px;overflow-x:auto;white-space:nowrap">
+    <button onclick="aiQuickChip('Проверь состояние всех активных машин')" style="font-size:11px;background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:2px 8px;cursor:pointer">🩺 Проверить все ПК</button>
+    <button onclick="aiQuickChip('У кого меньше 5 ГБ на диске C:?')" style="font-size:11px;background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:2px 8px;cursor:pointer">💾 Мало места</button>
+    <button onclick="aiQuickChip('Проверь системные ошибки в журнале System')" style="font-size:11px;background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:2px 8px;cursor:pointer">📋 Ошибки Windows</button>
+  </div>
+  <div style="padding:8px 10px;border-top:1px solid #e2e8f0;background:#fff;display:flex;gap:6px">
+    <input type="text" id="aiinput" placeholder="Задайте вопрос о машинах флота…" style="flex:1;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')aiSend()">
+    <button onclick="aiSend()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:700;font-size:13px">Отправить</button>
+  </div>
+</div>
 </script>
 </body>
 </html>

@@ -12,10 +12,13 @@ package main
 //	sys:disks   — свободно/всего по логическим дискам
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,6 +27,7 @@ import (
 
 	ssh "github.com/gliderlabs/ssh"
 	"golang.org/x/sys/windows"
+	"golang.org/x/text/transform"
 )
 
 var (
@@ -217,6 +221,44 @@ type memoryStatusEx struct {
 	AvailExtendedVirtual uint64
 }
 
+// queryEvents: выборка ошибок и предупреждений из системных журналов Windows через wevtutil.
+func queryEvents(s ssh.Session, args string) {
+	channel := "System"
+	limit := 15
+	fields := strings.Fields(args)
+	if len(fields) >= 1 {
+		if strings.EqualFold(fields[0], "application") {
+			channel = "Application"
+		} else if strings.EqualFold(fields[0], "system") {
+			channel = "System"
+		}
+	}
+	if len(fields) >= 2 {
+		if n, err := strconv.Atoi(fields[1]); err == nil && n > 0 && n <= 50 {
+			limit = n
+		}
+	}
+	cmd := exec.Command("wevtutil", "qe", channel, fmt.Sprintf("/c:%d", limit), "/rd:true", "/f:text", `*[System[(Level=1 or Level=2 or Level=3)]]`)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(s, "sys: events error: %v\n", err)
+		return
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		fmt.Fprintf(s, "sys: нет критических событий в журнале %s\n", channel)
+		return
+	}
+	if dec := oemDecoder(); dec != nil {
+		tr := transform.NewReader(bytes.NewReader(out), dec)
+		if decOut, rerr := io.ReadAll(tr); rerr == nil {
+			s.Write(decOut)
+			return
+		}
+	}
+	s.Write(out)
+}
+
 func sysNative(s ssh.Session, sub string) bool {
 	// sys:msg <base64-utf8> — сообщение пользователю (плашка на экране)
 	if b64, ok := strings.CutPrefix(sub, "msg "); ok {
@@ -327,6 +369,12 @@ func sysNative(s ssh.Session, sub string) bool {
 				return true
 			}
 			fmt.Fprintf(s, "sys: служба %s — %s\n", name, msg)
+			s.Exit(0)
+			return true
+		}
+		// sys:events <system|application> [limit]
+		if evArgs, ok := strings.CutPrefix(sub, "events"); ok {
+			queryEvents(s, strings.TrimSpace(evArgs))
 			s.Exit(0)
 			return true
 		}

@@ -1077,11 +1077,13 @@ func checkForceUpdate(client *gossh.Client, cfg config) {
 	if err != nil || ts <= 0 || ts <= atomic.LoadInt64(&lastForceSeen) {
 		return
 	}
-	atomic.StoreInt64(&lastForceSeen, ts)
+	// флаг помечаем только после УСПЕШНОГО обновления — иначе повтор на каждом heartbeat
 	log.Print("update: forced by dashboard")
 	if err := selfUpdate(client, cfg); err != nil {
-		log.Printf("update: forced check done: %v", err)
+		log.Printf("update: forced check failed: %v — retry on next heartbeat", err)
+		return
 	}
+	atomic.StoreInt64(&lastForceSeen, ts)
 }
 
 func selfUpdate(client *gossh.Client, cfg config) error {

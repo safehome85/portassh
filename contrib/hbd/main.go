@@ -534,6 +534,10 @@ func main() {
 		http.HandleFunc("/screen", screenHandler)
 		http.HandleFunc("/input", inputHandler)
 		http.HandleFunc("/viewer", viewerHandler)
+		http.HandleFunc("/events", eventsHandler)
+		http.HandleFunc("/ai/config", aiConfigHandler)
+		http.HandleFunc("/ai/explain-events", explainEventsHandler)
+		http.HandleFunc("/ai/chat", aiChatHandler)
 		log.Fatal(http.ListenAndServe("127.0.0.1:8897", nil))
 	}()
 
