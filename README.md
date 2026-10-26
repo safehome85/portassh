@@ -2,7 +2,7 @@
 
 # portassh
 
-**Remote SSH access to Windows machines without admin rights, installation or setup — one exe, run it and connect**
+**Remote SSH/RDP access to Windows machines without admin rights, installation or setup — one exe, run it and connect**
 
 [![CI](https://github.com/safehome85/portassh/actions/workflows/ci.yml/badge.svg)](https://github.com/safehome85/portassh/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Go-1.21%2B-00ADD8?logo=go&logoColor=white)
@@ -24,11 +24,14 @@ You need a terminal on a Windows machine that:
 - and whose antivirus distrusts unknown programs.
 
 The answer: one portable exe. Run it — it starts an SSH server on loopback
-and dials a reverse tunnel through your relay server. From your computer:
+and dials a reverse tunnel through your relay server. Then open the **web
+dashboard** on the relay: see every online machine, click 🖥 Terminal for a
+browser-based shell, 🖥️ RDP for remote desktop, or run a command on several
+machines at once.
 
 ```sh
-ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new \
-    -o ProxyCommand "ssh -i portassh_client.key -W %h:%p -o StrictHostKeyChecking=accept-new support@<relay>" \
+ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new \
+    -o ProxyCommand "ssh -C -i portassh_client.key -W %h:%p -o StrictHostKeyChecking=accept-new support@<relay>" \
     -p 2200 anyuser@localhost
 ```
 
@@ -40,32 +43,41 @@ firewall prompts.
 ## How it works
 
 ```
- your PC                                relay (VPS, any SSH)                target Windows
-┌─────────┐   ssh -J   ┌─────────────────────────┐  reverse tunnel    ┌───────────────────────┐
-│ client  ├───────────►│  sshd :22               │◄────SSH session────┤ portassh.exe          │
-│         │  direct-   │  127.0.0.1:2200 ────────┼────────────────────┤ • sshd  127.0.0.1:2222│
-└─────────┘  tcpip     │  (port forward)         │                    │ • cmd.exe via ConPTY  │
-                       └─────────────────────────┘                    └───────────────────────┘
+ your PC / phone                    relay (VPS)                        target Windows
+┌─────────┐   ssh -J -C   ┌──────────────────────────┐  reverse tunnel   ┌────────────────────────┐
+│ browser ├─────wss──────►│ nginx (basic auth)       │◄────SSH session───┤ portassh.exe           │
+│ client  ├───ssh -J -C──►│  sshd :22                │                   │ • sshd  127.0.0.1:2222 │
+└─────────┘   direct-    │  hbd  127.0.0.1:8897 ────┼───heartbeat───────┤ • cmd.exe via ConPTY   │
+             tcpip       │  wsterm 127.0.0.1:8898───┼───ws bridge───────┤ • RDP :3389 forwarded  │
+                         │  127.0.0.1:2200+ fwd     │                   └────────────────────────┘
+                         └──────────────────────────┘
 ```
 
 - On the target, the exe runs an **embedded SSH server** (shell / exec / SFTP)
   on loopback only — the firewall never prompts and no admin rights are needed
 - In parallel it opens a **reverse tunnel** to the relay using a key baked in
   at build time — no inbound access to the target is required
-- All keys and addresses are baked into the exe at build time (`baked.go`)
+- The relay runs two tiny helpers: **hbd** (in-memory heartbeat registry, no
+  shell forks) and **wsterm** (WebSocket ↔ SSH PTY bridge for the browser)
+- All keys and addresses are baked into the exe **obfuscated** at build time
+  (XOR with a per-build rolling key — `strings` reveals nothing)
 
 ## Features
 
 | | |
 |---|---|
 | 🖥 **Interactive shell** | cmd.exe / powershell via ConPTY ([go-pty]), full terminal with resize |
-| ⚡ **Exec** | the client's raw command line reaches cmd 1:1 — quotes, pipes and backslashes survive |
-| 📁 **SFTP** | `scp`/`sftp` files over the same tunnel |
+| ⚡ **Exec** | the client's raw command line reaches cmd 1:1 — quotes, pipes and backslashes survive; commands run in a persistent shell (no process spawns — antivirus-friendly) |
+| 🌐 **Web terminal** | `ssh -s`-style shell in the browser (xterm.js + WebSocket bridge), works from a phone |
+| 📊 **Broadcast exec** | select machines on the dashboard, run one command on all — parallel, summary table with exit codes |
+| 📦 **Inventory** | installed programs (registry, direct read), antivirus + state, model/CPU/RAM/disks — instant JSON, searchable across the fleet |
+| 🖥️ **RDP over SSH** | reverse-forwarded 3389, one-click `.rdp` download from the dashboard |
+| 🫥 **System tray** | green/yellow/red status icon, one-click "copy connect command", `-stealth` to hide |
+| 🔁 **Resilience** | auto-reconnect (2 s after laptop resume, 5→30 s backoff), 5 s dead-peer detection, ghost-port recycling (stable port per machine), graceful-shutdown offline status |
 | 🈳 **UTF-8** | CP866 output is decoded on the fly, no chcp spawning |
-| 🔁 **Resilience** | auto-reconnect (backoff 5→30 s), spawn retry on antivirus blocks, panic isolation |
-| 🖥 **Multi-machine** | registry on the relay, automatic port allocation, up to 100 machines at once |
+| 🖥 **Multi-machine** | registry on the relay, telemetry (user/OS/disk/RAM/version), aliases & notes, up to 100 machines |
+| ⏫ **Self-update** | clients check the relay every 30 min or on demand (dashboard button); named builds (ver. 1.15…) |
 | 🔐 **Admin mode** | `portassh.exe -admin` — one UAC prompt, separate tunnel, shell running as administrator |
-| 🤫 **Stealth** | no window appears, status goes to `portassh.log`; child consoles never flash |
 | 📦 **One file** | the 386 build runs on Win10/11 x64 (WOW64), x86 and ARM64 (x86 emulation) |
 
 ## Quick start
@@ -78,11 +90,11 @@ useradd -m -s /bin/sh portassh
 mkdir -p /home/portassh/.ssh && chmod 700 /home/portassh/.ssh
 ```
 
-**2. Keys and build** (requires Go 1.21+ and `ssh-keygen`):
+**2. Keys and build** (requires Go 1.21+, `ssh-keygen` and `python3`):
 
 ```sh
 ./scripts/gen-baked.sh relay.example.com   # ed25519 keys + baked.go
-./build.sh                                 # portassh.exe
+./build.sh                                 # portassh.exe (strings-obfuscated)
 ```
 
 The script prints a line for the relay's `authorized_keys` — add it once:
@@ -91,9 +103,13 @@ The script prints a line for the relay's `authorized_keys` — add it once:
 echo "<relay_ed25519.pub>" > /home/portassh/.ssh/authorized_keys
 ```
 
-**3. Target machine:** copy `portassh.exe` over and double-click it. Done —
-connect using the command from step 1 or from `portassh_connection.txt`
-(the file appears next to the exe).
+**3. Dashboard** — deploy `contrib/sshdash.php` + the `hbd`/`wsterm` helpers
+(see the file headers) behind nginx basic auth. It lists online machines and
+serves the client key and builds.
+
+**4. Target machine:** download `portassh.zip` from the dashboard, extract and
+run `portassh.exe`. Done — the machine appears in the dashboard; connect via
+the 🖥 Terminal button or the SSH command.
 
 > Full instructions: [docs/configuration.md](docs/configuration.md)
 
@@ -101,7 +117,6 @@ connect using the command from step 1 or from `portassh_connection.txt`
 
 ```sh
 portassh.exe -admin        # on the target: one UAC prompt
-pconnect-admin             # from your PC: a shell running as administrator
 ```
 
 The admin instance keeps its own tunnel (port 2201) and does not interfere
@@ -109,55 +124,65 @@ with the regular one. See [docs/configuration.md](docs/configuration.md).
 
 ## Multiple machines
 
-Every instance registers itself on the relay: `PC_NAME port time role`.
-The port is allocated automatically: 2200, 2201, … up to 100 machines.
-
-```sh
-pconnect-list              # all machines online
-pconnectgo DESKTOP-ABC123  # connect to a specific one by name
-```
-
-[docs/configuration.md](docs/configuration.md) •
-[docs/troubleshooting.md](docs/troubleshooting.md)
+Every instance registers itself on the relay:
+`PC_NAME port time role user os disk ram version`.
+The port is allocated automatically and stays with the machine (ghost-port
+recycling after crashes). The dashboard shows aliases, notes, telemetry and
+version compliance.
 
 ## Security
 
 The trust model is simple and explicit:
 
 - **The exe contains the tunnel private key** — anyone holding the binary can
-  open tunnels through your relay. The relay shell stays out of reach (the
-  tunnel user is restricted). Never publish built binaries
-- **The embedded server accepts exactly one baked client key** and listens on
-  loopback only
+  open tunnels through your relay. Baked strings are XOR-obfuscated (defeats
+  `strings` and static signature scans), but a determined reverse engineer
+  can recover them. Never publish built binaries
+- **The embedded server accepts exactly the baked client keys** (admin key +
+  the shared dashboard client key) and listens on loopback only
 - **The relay host key is pinned at build time** — no TOFU, no MITM window
+- **The web terminal and inventory** sit behind nginx basic auth; the bridge
+  only ever dials loopback
 - Vulnerability reports: [SECURITY.md](SECURITY.md)
 
 ## Antivirus
 
 An unsigned exe that spawns processes and opens tunnels attracts heuristics
-(verified against Kaspersky). portassh minimises the triggers (manifest
-`asInvoker`, no extra process spawns, retry on blocks), but the complete fix
-is marking it as a trusted app in your antivirus or code signing.
+(verified against Kaspersky). portassh minimises the triggers: exec commands
+run in **one persistent shell process** (no cmd.exe spawn bursts), diagnostics
+use native Win32 API calls instead of utilities, baked strings are
+obfuscated, and spawn failures are retried. The complete fix is marking it as
+a trusted app in your antivirus or code signing.
 Step by step: [docs/troubleshooting.md](docs/troubleshooting.md#forkexec-cmdexe-access-is-denied-intermittent).
 
 ## Troubleshooting
 
 Everything that broke during months of live use, with fixes, lives in
-[docs/troubleshooting.md](docs/troubleshooting.md): intermittent
-`Access is denied`, ghost ports on the relay, Cyrillic encoding, the 8191
-command length limit, relay-side diagnostics.
+[docs/troubleshooting.md](docs/troubleshooting.md) and
+[ISSUES.md](ISSUES.md): intermittent `Access is denied`, ghost ports on the
+relay, Cyrillic encoding, the 8191 command length limit, relay-side
+diagnostics, laptop sleep/resume.
 
 ## Repository layout
 
 ```
-├── main.go              # core: server, tunnel, exec
-├── oem_windows.go       # CP866→UTF-8 decoding and SysProcAttr.CmdLine (Windows)
-├── elevate_windows.go   # -admin: UAC via ShellExecuteW
-├── baked.go.example     # configuration template (keys/relay)
-├── scripts/gen-baked.sh # key generation and baked.go writer
-├── build.sh             # build + optional code signing
-├── docs/                # configuration and troubleshooting guides
-└── .github/             # CI, issue/PR templates, dependabot
+├── main.go                  # core: server, tunnel, exec, telemetry, updates
+├── tray_windows.go          # system tray (Shell_NotifyIconW + GDI icons)
+├── power_windows.go         # sleep/resume + graceful shutdown (WM_POWERBROADCAST)
+├── shellpool_windows.go     # persistent shell pool for exec
+├── native_windows.go        # native Win32 diagnostics (sys: prefix)
+├── subsys_info_windows.go   # 'info' subsystem: JSON machine passport + inventory
+├── oem_windows.go           # CP866→UTF-8 decoding, SysProcAttr.CmdLine, telemetry
+├── elevate_windows.go       # -admin: UAC via ShellExecuteW
+├── baked.go.example         # configuration template (keys/relay)
+├── scripts/gen-baked.sh     # key generation and baked.go writer
+├── scripts/obfuscate.py     # baked-string obfuscation (build-time XOR)
+├── contrib/sshdash.php      # the web dashboard
+├── contrib/hbd/             # relay daemon: heartbeat registry + broadcast exec + inventory proxy
+├── contrib/wsterm/          # relay daemon: WebSocket ↔ SSH PTY bridge (web terminal)
+├── build.sh                 # build + obfuscation + optional code signing
+├── docs/                    # configuration and troubleshooting guides
+└── .github/                 # CI, issue/PR templates, dependabot
 ```
 
 ## Development

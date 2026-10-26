@@ -3,6 +3,54 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.28.0] — 2026-10-26
+
+The dashboard becomes the primary control plane; the exe gains deep
+diagnostics and machine-friendly behaviour.
+
+### Added
+- Web dashboard (`contrib/sshdash.php`): online machine list with telemetry
+  (user/OS/disk/RAM/version), aliases & notes, instant search, download
+  buttons, force-update button, machine/inventory tabs
+- Broadcast exec: run one command on selected machines in parallel, summary
+  table with exit codes (executed by the `hbd` relay daemon — no proc_open)
+- Web terminal: browser-based shell via the `wsterm` WebSocket ↔ SSH PTY
+  bridge (xterm.js, works from a phone)
+- Deep inventory: installed programs (direct registry reads), antivirus
+  product + state, served as JSON by the `info` subsystem
+- RDP over SSH: reverse-forwarded 3389 (target port +10000), one-click `.rdp`
+  download
+- System tray icon (pure Win32): green/yellow/red status, copy-command menu,
+  `-stealth` to hide
+- Named builds: `ver. 1.N` counter, clients report their version in the
+  heartbeat; the dashboard flags outdated machines
+- Fast dead-peer detection: 5 s keepalive timeout (was: minutes of TCP hang)
+- Instant reconnect after laptop resume (WM_POWERBROADCAST → close dead
+  socket, 2 s reconnect)
+- Graceful shutdown: WM_ENDSESSION removes the machine from the dashboard
+  immediately
+- Ghost-port recycling: a machine reclaims its port after a crash instead of
+  drifting to port+1
+- Persistent shell pool for exec: no cmd.exe spawn bursts (antivirus-friendly)
+- Native Win32 diagnostics over the `sys:` exec prefix (whoami, hostname,
+  processes, services, disks — no utilities spawned)
+- Force-update signal: dashboard button → clients check within 60 s
+- Baked-string obfuscation: build-time XOR (defeats `strings`/static scans)
+
+### Fixed
+- exec hang on interactive commands (pool aborts on session close)
+- hbd registry rotation (compaction now actually runs at runtime)
+- wsterm: go.sum committed; TLS served directly with the full cert chain
+- telemetry: DOMAIN\\user kept intact in the registry line
+- sysNative: explicit exit status 0
+
+### Changed
+- Connect commands carry `-C` (SSH compression on the admin leg; x/crypto
+  itself only supports `none`) and `-i portassh_client.key`
+- Jump user: dedicated `support@` instead of root
+- Heartbeat line extended: user, OS version, free disk, RAM load, version
+- exec runs in a persistent shell: cwd/env persist between commands
+
 ## [1.0.0] — 2026-10-24
 
 First public release. Battle-tested: ~100 exec commands per day through the
