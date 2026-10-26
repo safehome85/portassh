@@ -137,6 +137,7 @@ func main() {
 	}()
 	if cfg.relay != "" {
 		startPowerWatcher()
+		startShellPool()
 		relayLoop(cfg)
 		return
 	}
@@ -351,6 +352,11 @@ func splitExecOpts(raw string) (timeout time.Duration, detached bool, cmd string
 
 func runExec(s ssh.Session, cfg config, raw string) {
 	timeout, detached, raw := splitExecOpts(raw)
+	// обычные команды — через постоянный шелл (антивирус не видит спавнов);
+	// timeout=/detached остаются на старом пути (нужен свой процесс)
+	if !detached && timeout == 0 && execViaPool(s, raw) {
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if timeout > 0 {
