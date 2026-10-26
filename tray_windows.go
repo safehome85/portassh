@@ -212,9 +212,7 @@ func trayHandleEvent(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 	switch msg {
 	case trayCallbackMsg:
 		switch lp & 0xFFFF {
-		case 0x0202: // WM_LBUTTONUP — скопировать команду
-			trayCopyCommand(hwnd)
-		case 0x0205, 0x0206: // WM_RBUTTONUP / WM_CONTEXTMENU — меню
+		case 0x0202, 0x0205, 0x0206: // любой клик — меню (копирование внутри меню)
 			var pt [2]int32
 			procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt[0])))
 			procSetForegroundWindow.Call(hwnd)
