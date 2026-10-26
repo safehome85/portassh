@@ -743,9 +743,21 @@ portassh подтверждает туннель каждую минуту; ма
   </div>
 </div>
 <script>
-let scrPort = 0, scrTimer = null, scrBusy = false, scrDrag = false, scrLastMove = 0;
+let scrPort = 0, scrTimer = null, scrBusy = false, scrDrag = false, scrLastMove = 0, scrWheelAcc = 0, scrWheelSent = true;
 document.addEventListener('mousemove', scrMove);
 document.addEventListener('mouseup', scrRelease);
+document.addEventListener('wheel', e => {
+  if (scrModalClosed()) return;
+  e.preventDefault();
+  scrWheelAcc -= e.deltaY;
+  if (!scrWheelSent) return;
+  scrWheelSent = true;
+  const d = Math.round(scrWheelAcc);
+  scrWheelAcc = 0;
+  if (d !== 0) scrSendLine('wheel ' + d);
+  setTimeout(() => { scrWheelSent = false; }, 120);
+}, { passive: false });
+function scrModalClosed() { return document.getElementById('scrmodal').style.display !== 'block'; }
 function openScreen(port, host) {
   scrPort = port;
   document.getElementById('scrhost').textContent = host;

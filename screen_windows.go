@@ -191,6 +191,14 @@ func screenMouseAt(flags uint32, x, y int) {
 	sendMouseAbs(flags, ax, ay)
 }
 
+// sendWheel: прокрутка колеса (120 = один щелчок, минус = вниз).
+func sendWheel(delta int) {
+	in := mouseSend{Type: 0}
+	in.Body.MouseData = uint32(int32(delta))
+	in.Body.Flags = 0x0800 // MOUSEEVENTF_WHEEL
+	procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
+}
+
 // typeText: печать текста юникод-событиями (кириллица работает).
 func typeText(text string) {
 	runes := []rune(text)
@@ -249,6 +257,12 @@ func execScreenInput(line string) {
 			y, e2 := strconv.Atoi(f[2])
 			if e1 == nil && e2 == nil {
 				screenMouseAt(0, x, y) // движение с зажатой кнопкой
+			}
+		}
+	case "wheel":
+		if len(f) >= 2 {
+			if d, err := strconv.Atoi(f[1]); err == nil {
+				sendWheel(d)
 			}
 		}
 	case "release":
