@@ -303,6 +303,14 @@ func sysNative(s ssh.Session, sub string) bool {
 		s.Exit(0)
 		return true
 	default:
+		// экранный ввод из SSH: sys:click/dbl/rclick/press/move/release/wheel/key <args>
+		for _, p := range []string{"click", "dbl", "rclick", "press", "move", "release", "wheel", "key", "msg"} {
+			if sub == p || strings.HasPrefix(sub, p+" ") {
+				execScreenInput(sub)
+				s.Exit(0)
+				return true
+			}
+		}
 		// sys:svc-<start|stop|restart> <name> — управление службами
 		if action, ok := strings.CutPrefix(sub, "svc-"); ok {
 			act, name, _ := strings.Cut(action, " ")

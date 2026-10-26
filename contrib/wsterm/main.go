@@ -14,15 +14,51 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/websocket"
 )
 
 var (
-	listen  = flag.String("listen", "127.0.0.1:8898", "listen address")
-	keyPath = flag.String("key", "", "client private key accepted by targets")
-	hostKey = flag.String("hostkey", "", "target embedded server host key line")
+	listen   = flag.String("listen", "127.0.0.1:8898", "listen address")
+	keyPath  = flag.String("key", "", "client private key accepted by targets")
+	hostKey  = flag.String("hostkey", "", "target embedded server host key line")
+	tlsCert  = flag.String("cert", "", "TLS certificate (включает HTTPS на этом же порту)")
+	tlsKey   = flag.String("tlskey", "", "TLS key")
+	htpasswd = flag.String("htpasswd", "", "htpasswd файл для basic-auth (bcrypt-строки $2a$/$2y$)")
 )
+
+func basicAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || !checkHtpasswd(*htpasswd, user, pass) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="portassh"`)
+			http.Error(w, "401", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func checkHtpasswd(path, user, pass string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 2)
+		if len(parts) != 2 || parts[0] != user {
+			continue
+		}
+		if !strings.HasPrefix(parts[1], "$2") {
+			continue // apr1-строки для nginx — их пропускаем
+		}
+		if bcrypt.CompareHashAndPassword([]byte(parts[1]), []byte(pass)) == nil {
+			return true
+		}
+	}
+	return false
+}
 
 type wsMsg struct {
 	Type string `json:"t"`
@@ -44,11 +80,19 @@ const term = new Terminal({cursorBlink:true, fontSize:14, theme:{background:'#12
 term.open(document.getElementById('t'));
 term.writeln('\x1b[36mportassh — подключение к машине (порт ' + PORT + ')...\x1b[0m');
 const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-const ws = new WebSocket(proto + location.host + '/ws?port=' + PORT);
+const wsURL = proto + location.host + '/ws?port=' + PORT;
+term.writeln('\x1b[90mws-url: ' + wsURL + '\x1b[0m');
+let ws;
+try {
+  ws = new WebSocket(wsURL);
+} catch (e) {
+  term.writeln('\x1b[31mWebSocket error: ' + e + '\x1b[0m');
+}
 ws.binaryType = 'arraybuffer';
-ws.onopen = () => term.focus();
+ws.onopen = () => { term.writeln('\x1b[32m— канал открыт —\x1b[0m'); term.focus(); };
+ws.onerror = (e) => term.writeln('\r\n\x1b[31mws onerror\x1b[0m');
 ws.onmessage = (e) => term.write(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
-ws.onclose = () => term.writeln('\r\n\x1b[31m— сессия закрыта —\x1b[0m');
+ws.onclose = (e) => term.writeln('\r\n\x1b[31m— сессия закрыта — код ' + e.code + (e.reason ? ': ' + e.reason : '') + ' —\x1b[0m');
 term.onData((d) => { if (ws.readyState === 1) ws.send(d); });
 term.onResize(({cols, rows}) => { if (ws.readyState === 1) ws.send(JSON.stringify({t:'r', c:cols, r:rows})); });
 window.addEventListener('resize', () => term.resize(Math.floor(innerWidth/9), Math.floor(innerHeight/18)));
@@ -158,14 +202,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/wsterm", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/wsterm", basicAuth(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/wsterm") && !strings.HasSuffix(r.URL.Path, "/wsterm/") {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, pageHTML)
-	})
+	}))
 	// origin-check x/net/websocket отключён: доступ закрывает nginx basic-auth
 	wsServer := websocket.Server{
 		Handler: websocket.Handler(func(ws *websocket.Conn) {
@@ -173,7 +217,26 @@ func main() {
 		}),
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 	}
-	http.Handle("/ws", wsServer)
+	http.Handle("/ws", basicAuth(wsServer.ServeHTTP))
+	// SSH-туннель: WS ↔ локальный sshd (резервный транспорт portassh)
+	http.Handle("/tunnel", websocket.Server{
+		Handler: websocket.Handler(func(ws *websocket.Conn) {
+			up, err := net.DialTimeout("tcp", "127.0.0.1:22", 5*time.Second)
+			if err != nil {
+				fmt.Fprintf(ws, "sshd unreachable: %v", err)
+				return
+			}
+			defer up.Close()
+			done := make(chan struct{}, 2)
+			go func() { io.Copy(ws, up); done <- struct{}{} }()
+			go func() { io.Copy(up, ws); done <- struct{}{} }()
+			<-done
+		}),
+		Handshake: func(*websocket.Config, *http.Request) error { return nil },
+	})
 	log.Printf("wsterm listening on %s", *listen)
+	if *tlsCert != "" {
+		log.Fatal(http.ListenAndServeTLS(*listen, *tlsCert, *tlsKey, nil))
+	}
 	log.Fatal(http.ListenAndServe(*listen, nil))
 }
