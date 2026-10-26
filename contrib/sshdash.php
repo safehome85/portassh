@@ -119,19 +119,17 @@ if (isset($_GET['shadow'])) {
     if (isset($j['data']['session_id'])) { $sid = (int) $j['data']['session_id']; }
     header('Content-Type: application/octet-stream');
     header('Content-Disposition: attachment; filename="portassh_shadow_' . $p . '.bat"');
-    echo "@echo off
-"
-       . "echo Теневой сеанс: вы видите экран пользователя вместе с ним.
-"
-       . "echo Закрытие окна SSH или mstsc завершает просмотр.
-"
-       . "start "portassh-tunnel" /min ssh -C -L {$rdpRelay}:127.0.0.1:{$rdpRelay} support@5.35.81.198
-"
-       . "timeout /t 2 >nul
-"
-       . "mstsc /shadow:{$sid} /v:localhost:{$rdpRelay} /control
-";
+    $bat = <<<BAT
+@echo off
+echo Теневой сеанс: вы видите экран пользователя вместе с ним.
+echo Закрытие окна SSH или mstsc завершает просмотр.
+start "portassh-tunnel" /min ssh -C -L {$rdpRelay}:127.0.0.1:{$rdpRelay} support@5.35.81.198
+timeout /t 2 >nul
+mstsc /shadow:{$sid} /v:localhost:{$rdpRelay} /control
+BAT;
+    echo $bat;
     exit;
+
 }
 
 // принудительный update-check на клиентах: пишем таймстамп-флаг,
