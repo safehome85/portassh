@@ -3,12 +3,43 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/transform"
 )
+
+// Телеметрия для heartbeat (расширенная строка реестра).
+func nativeUsername() string {
+	return os.Getenv("USERDOMAIN") + "\\" + os.Getenv("USERNAME")
+}
+
+func nativeOSVersion() string {
+	if v := windows.RtlGetVersion(); v != nil {
+		return fmt.Sprintf("%d.%d.%d", v.MajorVersion, v.MinorVersion, v.BuildNumber)
+	}
+	return ""
+}
+
+func nativeFreeDiskGB() int {
+	drive := os.Getenv("SystemDrive")
+	if drive == "" {
+		drive = "C:"
+	}
+	root, err := windows.UTF16PtrFromString(drive + "\\")
+	if err != nil {
+		return -1
+	}
+	var free, total uint64
+	if err := windows.GetDiskFreeSpaceEx(root, &free, &total, new(uint64)); err != nil {
+		return -1
+	}
+	return int(free / (1 << 30))
+}
 
 // setCmdLine sets the raw command line of the child process without Go's
 // MSVCRT argument escaping — the only reliable way to pass quoting through

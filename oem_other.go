@@ -3,7 +3,9 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 
 	"golang.org/x/text/transform"
@@ -16,6 +18,11 @@ func oemDecoder() transform.Transformer {
 
 // setCmdLine: on non-Windows exec.Cmd builds the command line itself.
 func setCmdLine(cmd *exec.Cmd, line string) {}
+
+// Телеметрия для heartbeat (unix-заглушки).
+func nativeUsername() string  { return os.Getenv("USER") }
+func nativeOSVersion() string { return runtime.GOOS }
+func nativeFreeDiskGB() int   { return -1 }
 
 // startDetached: child processes survive parent exit on unix.
 func startDetached(cmd *exec.Cmd) error {

@@ -20,6 +20,31 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// nativeMemoryLoadTotal: GlobalMemoryStatusEx (в x/sys нет обёртки).
+func nativeMemoryLoadTotal() (ms memoryStatusEx) {
+	ms.Length = uint32(unsafe.Sizeof(ms))
+	procGlobalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&ms)))
+	return ms
+}
+
+func nativeMemoryLoad() int {
+	return int(nativeMemoryLoadTotal().MemoryLoad)
+}
+
+var procGlobalMemoryStatusEx = windows.NewLazySystemDLL("kernel32.dll").NewProc("GlobalMemoryStatusEx")
+
+type memoryStatusEx struct {
+	Length               uint32
+	MemoryLoad           uint32
+	TotalPhys            uint64
+	AvailPhys            uint64
+	TotalPageFile        uint64
+	AvailPageFile        uint64
+	TotalVirtual         uint64
+	AvailVirtual         uint64
+	AvailExtendedVirtual uint64
+}
+
 func sysNative(s ssh.Session, sub string) bool {
 	switch sub {
 	case "whoami":

@@ -18,8 +18,6 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-var procGlobalMemoryStatusEx = syscall.NewLazyDLL("kernel32.dll").NewProc("GlobalMemoryStatusEx")
-
 type diskInfo struct {
 	Drive   string  `json:"drive"`
 	FreeGB  float64 `json:"free_gb"`
@@ -66,21 +64,7 @@ func infoHandler(s ssh.Session) {
 	info.GUID = regStr(`SOFTWARE\Microsoft\Cryptography`, "MachineGuid")
 	info.CPU = regStr(`HARDWARE\DESCRIPTION\System\CentralProcessor\0`, "ProcessorNameString")
 
-	// GlobalMemoryStatusEx через syscall — в x/sys нет обёртки
-	type memoryStatusEx struct {
-		Length               uint32
-		MemoryLoad           uint32
-		TotalPhys            uint64
-		AvailPhys            uint64
-		TotalPageFile        uint64
-		AvailPageFile        uint64
-		TotalVirtual         uint64
-		AvailVirtual         uint64
-		AvailExtendedVirtual uint64
-	}
-	ms := memoryStatusEx{Length: uint32(unsafe.Sizeof(memoryStatusEx{}))}
-	procGlobalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&ms)))
-	info.RAMGB = float64(ms.TotalPhys) / (1 << 30)
+	info.RAMGB = float64(nativeMemoryLoadTotal().TotalPhys) / (1 << 30)
 
 	bits, _ := windows.GetLogicalDrives()
 	for d := 0; d < 26; d++ {

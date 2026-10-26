@@ -710,10 +710,21 @@ func writeConnectionFile(cfg config) {
 	_ = os.WriteFile(p, []byte(connectCommand(cfg.relay, cfg.relayPort)+"\n"), 0o600)
 }
 
-// registryLine: "PC_NAME port time role" — the port is always field 2
-// (keeps pconnectgo compatible).
-func registryLine(host string, port int, role string, when time.Time) string {
-	return fmt.Sprintf("%s %d %s %s", sanitizeLine(host), port, when.Format("02.01_15:04"), role)
+// registryLine: "PC_NAME port time role username os_version free_disk_gb ram_load"
+// — the port is always field 2, time field 3 (backward compatible: дашборд
+// понимает и старые 4-польные строки).
+func registryLine(host string, port int, role string, when time.Time, username, osver string, diskGB int, ramLoad int) string {
+	extra := fmt.Sprintf("%s %s %d %d", sanitizeLine(username), sanitizeLine(osver), diskGB, ramLoad)
+	if username == "" || osver == "" || diskGB < 0 {
+		extra = "- - -1 -1"
+	}
+	return fmt.Sprintf("%s %d %s %s %s", sanitizeLine(host), port, when.Format("02.01_15:04"), role, extra)
+}
+
+// telemetry: username/os/диск/память для расширенного heartbeat.
+// Платформенные реализации — в oem_windows.go / oem_other.go.
+func telemetry() (string, string, int, int) {
+	return nativeUsername(), nativeOSVersion(), nativeFreeDiskGB(), nativeMemoryLoad()
 }
 
 // registerOnRelay appends a line to ~/online.txt on the relay so the list of
@@ -723,7 +734,8 @@ func registerOnRelay(client *gossh.Client, cfg config) {
 	if err != nil {
 		return
 	}
-	line := registryLine(host, cfg.relayPort, cfg.role, time.Now())
+	user, osver, disk, ram := telemetry()
+	line := registryLine(host, cfg.relayPort, cfg.role, time.Now(), user, osver, disk, ram)
 	sess, err := client.NewSession()
 	if err != nil {
 		return

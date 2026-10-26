@@ -9,3 +9,5 @@ func sysNative(s ssh.Session, sub string) bool {
 	_, _ = s, sub
 	return false
 }
+
+func nativeMemoryLoad() int { return -1 }

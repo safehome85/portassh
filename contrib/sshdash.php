@@ -82,6 +82,7 @@ if (isset($_GET['dl'])) {
   .ago { color: #cbd6ea; font-size: 14px; }
   .cmd { font-family: Consolas, monospace; font-size: 14px; color: #c9dcfb; user-select: all; }
   .empty { color: #cbd6ea; font-size: 15px; }
+  .meta { font-size: 12px; color: #8fa1c0; margin-top: 3px; }
   a.dl { color: #0f172a; background: #4ade80; padding: 7px 14px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 14px; }
   a.dl:hover { background: #22c55e; }
   a.dl.blue { background: #60a5fa; }
@@ -104,6 +105,16 @@ foreach ($lines as $line) {
     $p = explode(' ', trim($line));
     if (count($p) < 4) continue;
     [$host, $port, $t, $role] = $p;
+    // расширенная телеметрия (сборки 26.10+): username os_version disk ram
+    $user = isset($p[4]) && $p[4] !== '-' ? $p[4] : '';
+    $osv  = isset($p[5]) && $p[5] !== '-' ? $p[5] : '';
+    $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
+    $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
+    $meta = [];
+    if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
+    if ($osv !== '')   { $meta[] = 'OS ' . htmlspecialchars($osv); }
+    if ($disk !== null){ $meta[] = 'C: ' . $disk . 'GB'; }
+    if ($ram !== null) { $meta[] = 'RAM ' . $ram . '%'; }
     if (!in_array($role, ['user', 'admin'], true)) continue;
     // формат времени из реестра: "ДД.ММ_ЧЧ:ММ" (год не пишется)
     [$dmy, $hm] = explode('_', $t);
@@ -232,9 +243,11 @@ foreach ($active as $e) {
     $sec = $sysNow - $e['ts'];
     $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
     $cmd = "ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
+    $metaHtml = $meta ? '<div class="meta">' . implode(' · ', $meta) . '</div>' : '';
     printf(
-        "<tr><td><span class=\"dot\"></span>%s</td><td class=\"role-%s\">%s</td><td>%s</td><td class=\"cmd\">%s</td><td class=\"ago\">%s</td></tr>\n",
+        "<tr><td><span class=\"dot\"></span>%s%s</td><td class=\"role-%s\">%s</td><td>%s</td><td class=\"cmd\">%s</td><td class=\"ago\">%s</td></tr>\n",
         htmlspecialchars($e['host']),
+        $metaHtml,
         $e['role'],
         $e['role'] === 'admin' ? 'админ' : 'пользователь',
         htmlspecialchars($e['port']),
