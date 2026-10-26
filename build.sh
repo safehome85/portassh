@@ -11,6 +11,13 @@ if [ ! -f "baked.go" ]; then
   exit 1
 fi
 
+# обфускация чувствительных строк (XOR, scripts/obfuscate.py) — идемпотентно
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/obfuscate.py baked.go
+else
+  echo "WARN: python3 not found — baked.go stays plaintext" >&2
+fi
+
 GOOS=windows GOARCH=386 go build -trimpath -ldflags "-s -w -H=windowsgui" -o portassh.exe .
 
 # Optional code signing: place sign.pfx next to the script (and install
