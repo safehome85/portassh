@@ -14,6 +14,8 @@ import (
 )
 
 const (
+	wmQueryEndSession     = 0x0011
+	wmEndSession          = 0x0016
 	wmPowerBroadcast      = 0x0218
 	pbtApmSuspend         = 4
 	pbtApmResumeSuspend   = 6
@@ -58,6 +60,15 @@ type msgW struct {
 
 var powerWndProc = syscall.NewCallback(func(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 	switch msg {
+	case wmQueryEndSession:
+		// начало завершения Windows: быстро снимаем себя с дашборда (асинхронно,
+		// ~1 RTT через живой туннель), завершению не препятствуем
+		if c := activeClient.Load(); c != nil {
+			goSafe("offline", func() { sendOffline(c) })
+		}
+		return 1 // разрешаем завершение
+	case wmEndSession:
+		return 0
 	case wmPowerBroadcast:
 		switch wp {
 		case pbtApmResumeAutomatic, pbtApmResumeSuspend:

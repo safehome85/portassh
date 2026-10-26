@@ -720,6 +720,26 @@ func registerOnRelay(client *gossh.Client, cfg config) {
 	_ = sess.Run(fmt.Sprintf("umask 022 && echo '%s' >> ~/online.txt", line))
 }
 
+// sendOffline: штатное завершение Windows (reboot/logoff) — убираем свои
+// строки из реестра, чтобы дашборд сразу показал машину выключенной,
+// а не «активной до истечения heartbeat-окна».
+func sendOffline(client *gossh.Client) {
+	host, err := os.Hostname()
+	if err != nil {
+		return
+	}
+	host = sanitizeLine(host)
+	if host == "" {
+		return
+	}
+	sess, err := client.NewSession()
+	if err != nil {
+		return
+	}
+	defer sess.Close()
+	_ = sess.Run(fmt.Sprintf("sed -i '/^%s /d' ~/online.txt", host))
+}
+
 func sanitizeLine(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
