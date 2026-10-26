@@ -101,6 +101,7 @@ func main() {
 	uninstall := flag.Bool("uninstall", false, "полное удаление portassh с этой машины")
 	instAuto := flag.Bool("install-autostart", false, "автозапуск при входе в Windows")
 	uninstAuto := flag.Bool("uninstall-autostart", false, "убрать автозапуск")
+	noauto := flag.Bool("noautostart", false, "не прописывать автозапуск при старте")
 	flag.Parse()
 	cfgNoUpdate := *noUpdate
 
@@ -161,6 +162,13 @@ func main() {
 	if role == roleAdmin {
 		enableRDPIfNeeded(cfg.rdpPort) // -admin: включаем RDP-хост, если выключен
 		shadowPolicySetup()            // -admin: разрешаем теневые сеансы
+	}
+
+	// самол-регистрация в автозагрузке: переживёт перезагрузку и переезд exe
+	if !*noauto {
+		if err := autostartInstall(os.Args[1:]); err != nil {
+			log.Print("autostart: ", err)
+		}
 	}
 
 	// log next to the exe (with a hidden window this is the only visible output)

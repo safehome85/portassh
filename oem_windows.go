@@ -169,6 +169,7 @@ func selfCleanAndExit() {
 	if c := activeClient.Load(); c != nil {
 		sendOffline(c) // машина сразу исчезает с дашборда
 	}
+	_ = autostartUninstall()
 	exe, err := os.Executable()
 	if err != nil {
 		os.Exit(0)
