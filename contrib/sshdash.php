@@ -550,7 +550,7 @@ function filterRows(q) {
       $meta = $e['meta'];
       $probs = [];
       if ($e['disk'] !== null && $e['disk'] < 5) { $probs[] = '🔴 диск C: ' . (int) $e['disk'] . ' ГБ'; }
-      if ($e['upt'] !== null && $e['upt'] > 45) { $probs[] = '⏰ аптайм ' . $e['upt'] . ' дн'; }
+      if ($e['upt'] !== null && $e['upt'] > 5) { $probs[] = '⏰ аптайм ' . $e['upt'] . ' дн'; }
       $avf = sprintf('%s/inv_%d.json', $PRIVATE, (int) $e['port']);
       if (is_file($avf)) {
           $avj = json_decode((string) file_get_contents($avf), true);
