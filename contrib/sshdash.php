@@ -607,10 +607,11 @@ function filterRows(q) {
 <header class="top">
   <div>
     <h1>portassh <span class="badge-live">● <?= count($active) ?> активных</span></h1>
-    <div class="sub">пульт дежурного · автообновление 20 с · актуальная сборка <b><?= $LATEST_NAME !== '' ? 'ver. ' . htmlspecialchars($LATEST_NAME) : '?' ?></b></div>
+    <div class="sub">пульт дежурного · <span id="syncstatus"><span style="color:#10b981">● AJAX-синхронизация</span> (15 с)</span> · актуальная сборка <b><?= $LATEST_NAME !== '' ? 'ver. ' . htmlspecialchars($LATEST_NAME) : '?' ?></b></div>
   </div>
   <div class="actions">
     <button class="btn" style="background:#7c3aed;color:#fff;border-color:#6d28d9" onclick="toggleAICopilot()" title="AI SysAdmin Copilot">🤖 AI Copilot</button>
+    <button class="btn" onclick="doAjaxRefresh()" title="Обновить список машин без перезагрузки страницы">⟳ Обновить</button>
     <a class="btn" href="?dl=zip">⬇ .zip</a>
     <a class="btn" href="?dl=bin">⬇ .bin</a>
     <a class="btn" href="?dl=key">🔑 Ключ</a>
@@ -1559,29 +1560,73 @@ function renderMarkdown(md) {
     .replace(/\n- /g, '<br>• ');
 }
 
-// Умное автообновление таблицы раз в 20 секунд (не перезагружает, если пользователь занят)
-let smartRefreshTimer = null;
-function startSmartAutoRefresh() {
-  clearTimeout(smartRefreshTimer);
-  smartRefreshTimer = setTimeout(() => {
-    const copilot = document.getElementById('aicopilot');
-    const isCopilotOpen = copilot && (copilot.style.display === 'flex' || copilot.style.display === 'block');
-    if (isCopilotOpen || (typeof aiBusy !== 'undefined' && aiBusy)) {
-      startSmartAutoRefresh(); // откладываем
-      return;
+// Бесшовное фоновое AJAX-обновление таблицы и статистики без перезагрузки страницы
+let ajaxRefreshing = false;
+async function doAjaxRefresh() {
+  if (ajaxRefreshing) return;
+  ajaxRefreshing = true;
+  try {
+    const res = await fetch(window.location.href);
+    if (!res.ok) { ajaxRefreshing = false; return; }
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    // 1. Счетчик активных в шапке
+    const newBadge = doc.querySelector('.badge-live');
+    const curBadge = document.querySelector('.badge-live');
+    if (newBadge && curBadge) curBadge.innerHTML = newBadge.innerHTML;
+
+    // 2. Карточки сводки
+    const newCards = doc.querySelector('.cards');
+    const curCards = document.querySelector('.cards');
+    if (newCards && curCards) curCards.innerHTML = newCards.innerHTML;
+
+    // 3. Таблица машин с сохранением отмеченных чекбоксов
+    const curTable = document.querySelector('#tab-machines table');
+    const newTable = doc.querySelector('#tab-machines table');
+    if (curTable && newTable) {
+      const checkedSet = new Set(
+        Array.from(curTable.querySelectorAll('input[name="sel[]"]:checked')).map(cb => cb.value)
+      );
+      curTable.innerHTML = newTable.innerHTML;
+      if (checkedSet.size > 0) {
+        curTable.querySelectorAll('input[name="sel[]"]').forEach(cb => {
+          if (checkedSet.has(cb.value)) cb.checked = true;
+        });
+      }
+
+      // Применяем текущий поисковый фильтр
+      const qInput = document.getElementById('q');
+      if (qInput && qInput.value) {
+        filterRows(qInput.value);
+      }
+      if (typeof showProblemsOnly !== 'undefined' && showProblemsOnly) {
+        document.querySelectorAll('tr[data-search]').forEach(tr => {
+          const p = parseInt(tr.getAttribute('data-problems') || '0');
+          tr.style.display = (p === 0) ? 'none' : '';
+        });
+      }
+      if (typeof updateProbBtn === 'function') updateProbBtn();
     }
-    const hasModal = document.querySelector('.modal[style*="display: block"], .modal[style*="display: flex"], #eventsmodal[style*="display: block"]');
-    if (hasModal) {
-      startSmartAutoRefresh(); // откладываем
-      return;
+
+    // 4. Инвентарь (только если поиск по инвентарю не активен)
+    const invQ = document.getElementById('invq');
+    if (!invQ || !invQ.value) {
+      const newInv = doc.querySelector('#tab-inv');
+      const curInv = document.querySelector('#tab-inv');
+      if (newInv && curInv) curInv.innerHTML = newInv.innerHTML;
     }
-    const active = document.activeElement ? document.activeElement.tagName : '';
-    if (active === 'INPUT' || active === 'TEXTAREA') {
-      startSmartAutoRefresh(); // откладываем
-      return;
+
+    // 5. Статус синхронизации в шапке
+    const syncEl = document.getElementById('syncstatus');
+    if (syncEl) {
+      syncEl.innerHTML = '<span style="color:#10b981;font-weight:600">● AJAX ' + new Date().toLocaleTimeString() + '</span>';
     }
-    location.reload();
-  }, 20000);
+  } catch(e) {
+    console.warn('AJAX sync warning:', e);
+  } finally {
+    ajaxRefreshing = false;
+  }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -1609,8 +1654,8 @@ window.addEventListener('DOMContentLoaded', () => {
   // 3. Загружаем полный список моделей OpenRouter
   aiFetchConfig();
 
-  // 4. Запускаем умный цикл автообновления
-  startSmartAutoRefresh();
+  // 4. Запускаем периодическую AJAX-синхронизацию каждые 15 секунд
+  setInterval(doAjaxRefresh, 15000);
 });
 </script>
 
