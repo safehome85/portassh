@@ -25,6 +25,14 @@ $SKEW = $sysNow - mktime((int)$sh, (int)$sm, 0);
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
 
+// принудительный update-check на клиентах: пишем таймстамп-флаг,
+// exe проверяет его при каждом heartbeat (раз в минуту)
+if (isset($_GET['force'])) {
+    file_put_contents($PRIVATE . '/portassh-force.txt', (string) time());
+    header('Location: /sshdash');
+    exit;
+}
+
 // скачивание сборки (за тем же basic auth):
 //   ?dl=zip — portassh.zip (exe + инструкция) — основной вариант
 //   ?dl=bin — portassh.bin: браузеры не блокируют переименованный exe,

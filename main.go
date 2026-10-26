@@ -49,8 +49,9 @@ var buildStamp = "dev" // переопределяется при сборке: 
 // activeClient — текущий SSH-клиент к relay: обработчик событий питания
 // (power_windows.go) закрывает его при Resume/Sleep вместо ожидания TCP-таймаута.
 var (
-	activeClient atomic.Pointer[gossh.Client]
-	resumeHint   atomic.Bool // true сразу после Resume: реконнект за 2 с, без backoff
+	activeClient  atomic.Pointer[gossh.Client]
+	resumeHint    atomic.Bool // true сразу после Resume: реконнект за 2 с, без backoff
+	lastForceSeen int64       // последний обработанный таймстамп force-флага
 )
 
 const (
@@ -63,6 +64,9 @@ const (
 	// self-update: build + its sha256 are uploaded here on the relay
 	updateVersionPath = "/home/portassh/updates/version.txt"
 	updateExePath     = "/home/portassh/updates/portassh.exe"
+	// флаг принудительного update-check: дашборд пишет unix-таймстамп,
+	// клиенты сверяют при каждом heartbeat (раз в минуту)
+	forceFlagPath = "/home/user/web/itstandart.kz/private/portassh-force.txt"
 )
 
 func main() {
@@ -573,6 +577,7 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 			select {
 			case <-t.C:
 				registerOnRelay(client, cfg)
+				checkForceUpdate(client, cfg)
 			case <-hbStop:
 				return
 			}
@@ -787,6 +792,24 @@ func fetchViaSSH(client *gossh.Client, path string) ([]byte, error) {
 	}
 	defer sess.Close()
 	return sess.Output("cat " + path)
+}
+
+// checkForceUpdate: дашборд записал свежий таймстамп в force-флаг —
+// клиенты делают update-check немедленно, не дожидаясь 30-минутного тика.
+func checkForceUpdate(client *gossh.Client, cfg config) {
+	out, err := fetchViaSSH(client, forceFlagPath)
+	if err != nil {
+		return // флага нет
+	}
+	ts, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil || ts <= 0 || ts <= atomic.LoadInt64(&lastForceSeen) {
+		return
+	}
+	atomic.StoreInt64(&lastForceSeen, ts)
+	log.Print("update: forced by dashboard")
+	if err := selfUpdate(client, cfg); err != nil {
+		log.Printf("update: forced check done: %v", err)
+	}
 }
 
 func selfUpdate(client *gossh.Client, cfg config) error {
