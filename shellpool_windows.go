@@ -119,7 +119,7 @@ func execViaPool(s ssh.Session, raw string) bool {
 	exePool.sink.Store(s)
 	defer exePool.sink.Store(io.Discard)
 
-	feed := raw + "\r\n" + exePool.marker + "%ERRORLEVEL%\r\n"
+	feed := raw + "\r\n" + "echo " + exePool.marker + "%ERRORLEVEL%\r\n"
 	if _, err := io.WriteString(exePool.stdin, feed); err != nil {
 		// труба мертва — тихий перезапуск и вторая попытка
 		exePool.cmd = nil
@@ -138,8 +138,9 @@ func execViaPool(s ssh.Session, raw string) bool {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSuffix(sc.Text(), "\r")
-		if strings.HasPrefix(line, exePool.marker) {
-			code, _ := strconv.Atoi(strings.TrimPrefix(line, exePool.marker))
+		// промпт cmd приклеен к выводу ("C:\...>__PSSH...") — ищем маркер внутри строки
+		if idx := strings.Index(line, exePool.marker); idx >= 0 {
+			code, _ := strconv.Atoi(strings.TrimPrefix(line[idx:], exePool.marker))
 			s.Exit(code)
 			return true
 		}
