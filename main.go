@@ -43,6 +43,8 @@ type config struct {
 	allowedClientPassword string
 	rdpPort               int
 	screenMs              int
+	wssAddr               string
+	forceWS               bool
 	noUpdate              bool
 }
 
@@ -93,6 +95,8 @@ func main() {
 	stealth := flag.Bool("stealth", false, "не показывать иконку в системном трее")
 	rdpport := flag.Int("rdpport", 3389, "локальный порт RDP на цели (0 = не форвардить)")
 	screen := flag.Int("screen", 1500, "интервал кадров экрана, мс (0 = выключить)")
+	wss := flag.String("wss", "itstandart.kz:8899", "резервный WSS-транспорт (домен:порт моста)")
+	forcews := flag.Bool("forcews", false, "сразу использовать WSS-транспорт")
 	doctor := flag.Bool("doctor", false, "режим самодиагностики: сеть, ConPTY, права, реестр")
 	uninstall := flag.Bool("uninstall", false, "полное удаление portassh с этой машины")
 	instAuto := flag.Bool("install-autostart", false, "автозапуск при входе в Windows")
@@ -124,6 +128,8 @@ func main() {
 		role:                  role,
 		rdpPort:               *rdpport,
 		screenMs:              *screen,
+		wssAddr:               *wss,
+		forceWS:               *forcews,
 		allowedClientPubKeys:  allowedClientPubKeys,
 		allowedClientPassword: allowedClientPassword,
 		noUpdate:              cfgNoUpdate,
@@ -190,6 +196,7 @@ func main() {
 	}()
 	if cfg.relay != "" {
 		trayEnabled.Store(!*stealth)
+		_ = forcews
 		startPowerWatcher()
 		startShellPool()
 		relayLoop(cfg)
@@ -545,10 +552,35 @@ func relayLoop(cfg config) {
 	port := cfg.relayPort
 	delay := 5 * time.Second
 	failCount := 0
+	directFails := 0
+	useWS := cfg.forceWS
 	for {
-		chosen, err := relayOnce(cfg, port)
+		var chosen int
+		var err error
+		if useWS {
+			chosen, err = relayOnceWS(cfg, port)
+		} else {
+			chosen, err = relayOnce(cfg, port)
+		}
 		port = chosen
 		if err != nil {
+			if !useWS {
+				directFails++
+				if directFails >= 3 {
+					useWS = true
+					directFails = 0
+					log.Print("tunnel: relay:22 недоступен 3 раза — переключаюсь на WSS-транспорт")
+				}
+			} else {
+				useWS = false
+				log.Print("tunnel: WSS-транспорт не ответил — возврат на прямое соединение")
+			}
+			log.Printf("tunnel: %v; retrying in %s", err, delay)
+			if resumeHint.Swap(false) {
+				// пробуждение: коннект гарантированно мёртв, не копим backoff
+				delay = 2 * time.Second
+				trayState.Store(1)
+			}
 			failCount++
 			if failCount >= 3 {
 				trayState.Store(2) // красный: серия ошибок
@@ -602,6 +634,38 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 	}
 	client := gossh.NewClient(cc, chans, reqs)
 	defer client.Close()
+	return tunnelSession(client, cfg, wantPort)
+}
+
+// relayOnceWS: тот же туннель, но SSH-трафик завёрнут в WebSocket (wss).
+func relayOnceWS(cfg config, wantPort int) (int, error) {
+	signer := mustLoadBakedSigner(relayPrivKeyB64)
+	hostKey, err := bakedRelayHostKey()
+	if err != nil {
+		return wantPort, err
+	}
+	wsConn, err := wsDial(cfg.wssAddr)
+	if err != nil {
+		return wantPort, err
+	}
+	cc, chans, reqs, err := gossh.NewClientConn(wsConn, cfg.wssAddr, &gossh.ClientConfig{
+		User:              cfg.relayUser,
+		Auth:              []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback:   gossh.FixedHostKey(hostKey),
+		HostKeyAlgorithms: []string{gossh.KeyAlgoED25519},
+	})
+	if err != nil {
+		_ = wsConn.Close()
+		return wantPort, err
+	}
+	client := gossh.NewClient(cc, chans, reqs)
+	defer client.Close()
+	return tunnelSession(client, cfg, wantPort)
+}
+
+// tunnelSession: всё после установки SSH-соединения (форварды, реестр,
+// heartbeat, обновления, экран). Блокирует до разрыва соединения.
+func tunnelSession(client *gossh.Client, cfg config, wantPort int) (int, error) {
 	activeClient.Store(client)
 	defer activeClient.Store(nil)
 
@@ -636,6 +700,7 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 
 	local := fmt.Sprintf("127.0.0.1:%d", cfg.localPort)
 	var ln net.Listener
+	var err error
 	port := wantPort
 	if persisted := readPersistedPort(); persisted > 0 && persisted != wantPort && wantPort == 2200 {
 		// машина со своим историческим портом: начинаем с него, а не с 2200
@@ -662,7 +727,7 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 	defer ln.Close()
 	savePersistedPort(port)
 	log.Printf("tunnel: connected to %s as %s, forwarding 127.0.0.1:%d -> %s",
-		addr, cfg.relayUser, port, local)
+		cfg.relay+", "+cfg.relayUser, cfg.relayUser, port, local)
 
 	cfg.relayPort = port
 	writeConnectionFile(cfg)
