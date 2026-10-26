@@ -24,3 +24,5 @@ grill-plan.md
 portassh_client_key*
 build.ver
 portassh_client_key*
+contrib/hbd/hbd
+contrib/wsterm/wsterm
