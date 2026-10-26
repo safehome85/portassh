@@ -24,7 +24,7 @@ The script prints the `authorized_keys` line for the relay — add it once.
 | `relayHostKeyLine` | Relay host key in known_hosts format | Pinned at build time |
 | `serverHostKeyB64` | Private host key of the embedded SSH server | Shared across builds — clients never see warnings |
 | `serverHostPub` | Public host key part (for client known_hosts) | |
-| `allowedClientPubKey` | The only client key the server accepts | Public part of the key of the machine you connect FROM |
+| `allowedClientPubKeys` | Client keys the server accepts (slice — e.g. the admin's personal key plus the shared `portassh-client` key) | Public parts of the keys you connect FROM; a slice can't be a `const`, so it lives outside the `const` block in baked.go |
 
 Manual key generation:
 
