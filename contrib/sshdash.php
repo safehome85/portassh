@@ -11,6 +11,7 @@
  */
 $PRIVATE     = '/home/user/web/itstandart.kz/private'; // каталог артефактов (реестр, сборки, ключ)
 $REGISTRY    = "$PRIVATE/portassh-online.txt";
+$ALIASES_F   = "$PRIVATE/portassh-aliases.json";
 $LATEST_RAW  = trim((string) @file_get_contents("$PRIVATE/portassh-version.txt"));
 $LATEST_VER  = preg_split('/\s+/', $LATEST_RAW)[0] ?? '';
 $LATEST_NAME = preg_split('/\s+/', $LATEST_RAW)[1] ?? '';
@@ -27,6 +28,25 @@ $SKEW = $sysNow - mktime((int)$sh, (int)$sm, 0);
 
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
+
+// метки и заметки машин: JSON рядом с реестром, редактируется из интерфейса
+if (isset($_GET['setalias'])) {
+    $h = preg_replace('/[^A-Za-z0-9._-]/', '', (string) $_GET['setalias']);
+    if ($h !== '') {
+        $name = mb_substr(trim((string) ($_GET['name'] ?? '')), 0, 60);
+        $note = mb_substr(trim((string) ($_GET['note'] ?? '')), 0, 200);
+        $al = json_decode((string) @file_get_contents($ALIASES_F), true);
+        if (!is_array($al)) { $al = []; }
+        if ($name === '' && $note === '') {
+            unset($al[$h]);
+        } else {
+            $al[$h] = ['name' => $name, 'note' => $note];
+        }
+        file_put_contents($ALIASES_F, json_encode($al, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+    }
+    header('Location: /sshdash');
+    exit;
+}
 
 // принудительный update-check на клиентах: пишем таймстамп-флаг,
 // exe проверяет его при каждом heartbeat (раз в минуту)
@@ -109,7 +129,19 @@ if (isset($_GET['dl'])) {
 </style>
 </head>
 <body>
+<script>
+function editAlias(host, cur, note) {
+  const n = prompt('Имя машины (оставить пустым = удалить метку):', cur || '');
+  if (n === null) return;
+  const t = prompt('Заметка (необязательно):', note || '');
+  if (t === null) return;
+  location.href = '/sshdash?setalias=' + encodeURIComponent(host)
+    + '&name=' + encodeURIComponent(n) + '&note=' + encodeURIComponent(t);
+}
+</script>
 <?php
+$aliases = json_decode((string) @file_get_contents($ALIASES_F), true);
+if (!is_array($aliases)) { $aliases = []; }
 $lines = @file($REGISTRY, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
 $latest = [];
 foreach ($lines as $line) {
@@ -122,6 +154,7 @@ foreach ($lines as $line) {
     $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
     $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
     $ver  = isset($p[8]) && $p[8] !== '-' ? $p[8] : '';
+    $alias = isset($aliases[$host]) ? $aliases[$host] : null;
     $meta = [];
     if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
     if ($osv !== '')   { $meta[] = 'OS ' . htmlspecialchars($osv); }
@@ -264,11 +297,21 @@ foreach ($active as $e) {
     $sec = $sysNow - $e['ts'];
     $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
     $cmd = "ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
+    if ($alias !== null && $alias['name'] !== '') {
+        array_unshift($meta, '🖥 ' . htmlspecialchars($e['host']));
+    }
+    if ($alias !== null && $alias['note'] !== '') {
+        $meta[] = '📝 ' . htmlspecialchars($alias['note']);
+    }
     $metaHtml = $meta ? '<div class="meta">' . implode(' · ', $meta) . '</div>' : '';
+    $editBtn = '<a href="#" class="meta" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
+             . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
+             . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false">✏️</a>';
     printf(
-        "<tr><td><span class=\"dot\"></span>%s%s</td><td class=\"role-%s\">%s</td><td>%s</td><td class=\"cmd\">%s</td><td class=\"ago\">%s</td></tr>\n",
-        htmlspecialchars($e['host']),
+        "<tr><td><span class=\"dot\"></span>%s%s %s</td><td class=\"role-%s\">%s</td><td>%s</td><td class=\"cmd\">%s</td><td class=\"ago\">%s</td></tr>\n",
+        htmlspecialchars($alias !== null && $alias['name'] !== '' ? $alias['name'] : $e['host']),
         $metaHtml,
+        $editBtn,
         $e['role'],
         $e['role'] === 'admin' ? 'админ' : 'пользователь',
         htmlspecialchars($e['port']),
