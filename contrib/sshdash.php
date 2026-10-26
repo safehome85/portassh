@@ -542,6 +542,7 @@ function filterRows(q) {
                . ' <a class="btn sm sky" href="?rdp=' . (int) $e['port'] . '" title="скачать .rdp">🖥️ RDP</a>'
                . ' <a class="btn sm" href="#" onclick="openProcs(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="диспетчер задач">📊 Процессы</a>'
                . ' <a class="btn sm" href="?shadow=' . (int) $e['port'] . '" title="совместный экран">👥 Тень</a>'
+               . ' <a class="btn sm" href="#" onclick="openSvc(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="службы">⚙ Службы</a>'
                . ' <a class="btn sm" href="#" onclick="openScreen(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="экран в браузере">🖼 Экран</a>'
                . ' <a class="btn sm" href="#" onclick="openFiles(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="файлы машины">📁 Файлы</a>'
                . ' <a class="btn sm copy" href="#" onclick="copyCmd(' . htmlspecialchars(json_encode($cmd)) . ', this);return false">⧉ команда</a>';
