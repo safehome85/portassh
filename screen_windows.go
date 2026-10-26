@@ -168,6 +168,29 @@ func screenRightClick(x, y int) {
 	sendMouseAbs(mouseRightUp, ax, ay)
 }
 
+// screenMouseAt: событие кнопки/движения в координатах кадра.
+func screenMouseAt(flags uint32, x, y int) {
+	imgW, imgH := lastCaptureDims()
+	if imgW <= 0 || imgH <= 0 {
+		return
+	}
+	ax := x * 65536 / imgW
+	ay := y * 65536 / imgH
+	if ax < 0 {
+		ax = 0
+	}
+	if ax > 65535 {
+		ax = 65535
+	}
+	if ay < 0 {
+		ay = 0
+	}
+	if ay > 65535 {
+		ay = 65535
+	}
+	sendMouseAbs(flags, ax, ay)
+}
+
 // typeText: печать текста юникод-событиями (кириллица работает).
 func typeText(text string) {
 	runes := []rune(text)
@@ -212,6 +235,30 @@ func execScreenInput(line string) {
 		return
 	}
 	switch f[0] {
+	case "press":
+		if len(f) >= 3 {
+			x, e1 := strconv.Atoi(f[1])
+			y, e2 := strconv.Atoi(f[2])
+			if e1 == nil && e2 == nil {
+				screenMouseAt(mouseLeftDown, x, y)
+			}
+		}
+	case "move":
+		if len(f) >= 3 {
+			x, e1 := strconv.Atoi(f[1])
+			y, e2 := strconv.Atoi(f[2])
+			if e1 == nil && e2 == nil {
+				screenMouseAt(0, x, y) // движение с зажатой кнопкой
+			}
+		}
+	case "release":
+		if len(f) >= 3 {
+			x, e1 := strconv.Atoi(f[1])
+			y, e2 := strconv.Atoi(f[2])
+			if e1 == nil && e2 == nil {
+				screenMouseAt(mouseLeftUp, x, y)
+			}
+		}
 	case "click", "dbl":
 		if len(f) >= 3 {
 			x, e1 := strconv.Atoi(f[1])

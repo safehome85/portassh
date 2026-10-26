@@ -739,11 +739,13 @@ portassh подтверждает туннель каждую минуту; ма
         <a href="#" onclick="closeScreen();return false" style="color:#e8eefc;text-decoration:none;font-size:18px">✕</a>
       </div>
     </div>
-    <img id="scrimg" style="max-width:100%;max-height:calc(100vh - 80px);cursor:crosshair;border:1px solid #2a3040;border-radius:8px" onclick="scrClick(event, false)" ondblclick="scrClick(event, true)" oncontextmenu="scrRClick(event)">
+    <img id="scrimg" draggable="false" style="max-width:100%;max-height:calc(100vh - 80px);cursor:crosshair;border:1px solid #2a3040;border-radius:8px;user-select:none" onmousedown="scrPress(event)" onmouseup="scrRelease(event)" onclick="scrClick(event, false)" ondblclick="scrClick(event, true)" oncontextmenu="scrRClick(event)">
   </div>
 </div>
 <script>
-let scrPort = 0, scrTimer = null, scrBusy = false;
+let scrPort = 0, scrTimer = null, scrBusy = false, scrDrag = false, scrLastMove = 0;
+document.addEventListener('mousemove', scrMove);
+document.addEventListener('mouseup', scrRelease);
 function openScreen(port, host) {
   scrPort = port;
   document.getElementById('scrhost').textContent = host;
@@ -772,6 +774,23 @@ function scrSendLine(line) {
   fetch('?input=' + scrPort + '&line=' + encodeURIComponent(line));
 }
 function scrClick(e, dbl) { scrSendLine((dbl ? 'dbl ' : 'click ') + scrCoords(e)); }
+function scrPress(e) {
+  e.preventDefault();
+  scrDrag = true;
+  scrSendLine('press ' + scrCoords(e));
+}
+function scrMove(e) {
+  if (!scrDrag) return;
+  const now = Date.now();
+  if (now - scrLastMove < 120) return;
+  scrLastMove = now;
+  scrSendLine('move ' + scrCoords(e));
+}
+function scrRelease(e) {
+  if (!scrDrag) return;
+  scrDrag = false;
+  scrSendLine('release ' + scrCoords(e));
+}
 function scrRClick(e) { e.preventDefault(); scrSendLine('rclick ' + scrCoords(e)); }
 function scrSendText() {
   const t = document.getElementById('scrtext').value;
