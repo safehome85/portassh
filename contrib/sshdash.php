@@ -24,9 +24,8 @@ $MAX_AGE     = 7 * 86400;     // записи старше недели игно
 
 // PHP-TZ может отличаться от системного (машине пишут локальное время) —
 // калибруем mktime-эпохи по системным `date +%s` / `date +%H:%M`
-$sysNow = (int) trim((string) @shell_exec('date +%s'));
-[$sh, $sm] = explode(':', trim((string) @shell_exec('date +%H:%M')));
-$SKEW = $sysNow - mktime((int)$sh, (int)$sm, 0);
+$sysNow = time(); // без shell_exec: он может быть в disable_functions
+$SKEW = $sysNow - mktime((int)date('H'), (int)date('i'), 0); // смещение TZ PHP vs системное
 
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
