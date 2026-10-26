@@ -89,6 +89,7 @@ func main() {
 	noUpdate := flag.Bool("noupdate", false, "disable self-update checks")
 	stealth := flag.Bool("stealth", false, "не показывать иконку в системном трее")
 	rdpport := flag.Int("rdpport", 3389, "локальный порт RDP на цели (0 = не форвардить)")
+	doctor := flag.Bool("doctor", false, "режим самодиагностики: сеть, ConPTY, права, реестр")
 	flag.Parse()
 	cfgNoUpdate := *noUpdate
 
@@ -118,6 +119,10 @@ func main() {
 		allowedClientPubKeys:  allowedClientPubKeys,
 		allowedClientPassword: allowedClientPassword,
 		noUpdate:              cfgNoUpdate,
+	}
+
+	if *doctor {
+		os.Exit(runDoctor(os.Stdout, cfg))
 	}
 
 	// log next to the exe (with a hidden window this is the only visible output)
@@ -457,6 +462,16 @@ func runExec(s ssh.Session, cfg config, raw string) {
 	}
 	fmt.Fprintf(s, "portassh: failed to start %q: %v\n", raw, lastErr)
 	s.Exit(127)
+}
+
+func splitRelayHostPort(relay string) (string, string) {
+	if strings.Contains(relay, ":") {
+		h, p, err := net.SplitHostPort(relay)
+		if err == nil {
+			return h, p
+		}
+	}
+	return relay, "22"
 }
 
 // --- reverse tunnel to relay ---
