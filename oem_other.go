@@ -24,6 +24,8 @@ func enableRDPIfNeeded(rdpPort int) { _ = rdpPort }
 
 func shadowPolicySetup() {}
 
+func nativeUptimeDays() int { return -1 }
+
 func setClipboardData(text []byte) error { _ = text; return fmt.Errorf("только Windows") }
 
 func autostartInstall(args []string) error { _ = args; return fmt.Errorf("только Windows") }

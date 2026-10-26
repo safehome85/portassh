@@ -310,6 +310,7 @@ foreach ($lines as $line) {
     $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
     $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
     $ver  = isset($p[8]) && $p[8] !== '-' ? $p[8] : '';
+    $upt  = isset($p[9]) && $p[9] !== '-' && (int)$p[9] >= 0 ? (int)$p[9] : null;
     $alias = isset($aliases[$host]) ? $aliases[$host] : null;
     $meta = [];
     if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
@@ -333,7 +334,7 @@ foreach ($lines as $line) {
     if ($sysNow - $ts > $MAX_AGE) continue;
     $key = $host . '|' . $role;
     if (!isset($latest[$key]) || $latest[$key]['ts'] < $ts) {
-        $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'meta');
+        $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'meta', 'upt');
     }
 }
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
@@ -410,6 +411,8 @@ foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATE
   .mname { font-weight: 700; font-size: 14.5px; }
   .mhost { color: var(--muted); font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
   .chip { display: inline-block; background: #f1f5f9; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; color: #475569; margin: 2px 4px 2px 0; }
+  .prob-r { background: #fef2f2 !important; color: #b91c1c !important; font-weight: 700; }
+  .prob-a { background: #fffbeb !important; color: #b45309 !important; font-weight: 700; }
   .chip.ver-ok { background: #ecfdf5; color: #059669; font-weight: 700; }
   .chip.ver-old { background: #fffbeb; color: #b45309; font-weight: 700; }
   .role-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
@@ -527,7 +530,10 @@ function filterRows(q) {
 <div class="panel">
   <div class="panel-head">
     <h2>Машины</h2>
-    <input type="search" id="q" placeholder="фильтр: имя, хост, пользователь…" oninput="filterRows(this.value)">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="search" id="q" placeholder="фильтр: имя, хост, пользователь…" oninput="filterRows(this.value)">
+      <button class="btn" id="probbtn" onclick="toggleProblems()" style="display:none">👁 Только с проблемами</button>
+    </div>
   </div>
   <form method="get" action="/sshdash">
   <table>
@@ -542,15 +548,28 @@ function filterRows(q) {
       $cmd = "ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
       $alias = $e['alias'];
       $meta = $e['meta'];
+      $probs = [];
+      if ($e['disk'] !== null && $e['disk'] < 5) { $probs[] = '🔴 диск C: ' . (int) $e['disk'] . ' ГБ'; }
+      if ($e['upt'] !== null && $e['upt'] > 45) { $probs[] = '⏰ аптайм ' . $e['upt'] . ' дн'; }
+      $avf = sprintf('%s/inv_%d.json', $PRIVATE, (int) $e['port']);
+      if (is_file($avf)) {
+          $avj = json_decode((string) file_get_contents($avf), true);
+          $av = $avj['data']['antivirus'] ?? null;
+          if ($av && mb_strtolower($av['state'] ?? '') !== 'running' && mb_strpos($av['product'] ?? '', 'не обнаружен') === false) {
+              $probs[] = '⚠️ AV: ' . $av['product'] . ' ' . $av['state'];
+          }
+      }
       if ($alias !== null && $alias['name'] !== '') {
           array_unshift($meta, '🖥 ' . htmlspecialchars($e['host']));
       }
       if ($alias !== null && $alias['note'] !== '') {
           $meta[] = '📝 ' . htmlspecialchars($alias['note']);
       }
+      if ($probs) { $meta = array_merge($probs, $meta); }
       $metaHtml = $meta ? '<div class="meta">' . implode(' · ', $meta) . '</div>' : '';
       $dispName = ($alias !== null && $alias['name'] !== '') ? $alias['name'] : $e['host'];
       $search = mb_strtolower($dispName . ' ' . $e['host'] . ' ' . ($e['user'] ?? '') . ' ' . $e['role']);
+      $rowStyle = $probs ? 'background:#fffbeb' : '';
       $editBtn = '<a href="#" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
                . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
                . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false" title="метка/заметка">✏️</a>';
@@ -564,13 +583,16 @@ function filterRows(q) {
                . ' <a class="btn sm" href="#" onclick="openFiles(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="файлы машины">📁 Файлы</a>'
                . ' <a class="btn sm copy" href="#" onclick="copyCmd(' . htmlspecialchars(json_encode($cmd)) . ', this);return false">⧉ команда</a>';
       printf(
-          '<tr data-search="%s"><td><input type="checkbox" name="sel[]" value="%d"></td>'
+          '<tr data-search="%s" data-host="%s" data-problems="%d" style="%s"><td><input type="checkbox" name="sel[]" value="%d"></td>'
           . '<td><span class="dot"></span><span class="mname">%s</span>%s%s</td>'
           . '<td><span class="role-pill role-%s">%s</span></td>'
           . '<td><b>%d</b></td>'
           . '<td class="btnrow">%s</td>'
           . '<td class="ago">%s</td></tr>' . "\n",
           htmlspecialchars($search),
+          htmlspecialchars($e['host']),
+          count($probs),
+          $rowStyle,
           (int) $e['port'],
           htmlspecialchars($dispName),
           $metaHtml,
@@ -584,6 +606,41 @@ function filterRows(q) {
   }
   ?>
   </table>
+<script>
+<?php foreach ($active as $e) { if (isset($e['ram']) && $e['ram'] !== null && $e['ram'] > 92) { echo "ramWatch(" . json_encode($e['host']) . ", " . (int) $e['ram'] . ");\n"; } } ?>
+function ramWatch(host, ram) {
+  const k = 'ramhist_' + host;
+  let h = [];
+  try { h = JSON.parse(localStorage.getItem(k) || '[]'); } catch (err) {}
+  h.push(ram);
+  if (h.length > 3) h = h.slice(-3);
+  localStorage.setItem(k, JSON.stringify(h));
+  if (h.length === 3 && h.every(v => v > 92)) {
+    const tr = document.querySelector('tr[data-host="' + host + '"]');
+    if (!tr || tr.querySelector('.prob-a')) return;
+    const chip = document.createElement('span');
+    chip.className = 'chip prob-a';
+    chip.textContent = '🟠 RAM > 92% (3 проверки)';
+    const meta = tr.querySelector('.meta');
+    if (meta) meta.append(chip);
+    tr.setAttribute('data-problems', String((parseInt(tr.getAttribute('data-problems') || '0') || 0) + 1));
+    tr.style.background = '#fffbeb';
+  }
+}
+(function updateProbBtn() {
+  const n = document.querySelectorAll('tr[data-problems]:not([data-problems="0"])').length;
+  const btn = document.getElementById('probbtn');
+  if (n > 0) { btn.style.display = ''; btn.textContent = '👁 Только с проблемами (' + n + ')'; }
+})();
+let showProblemsOnly = false;
+function toggleProblems() {
+  showProblemsOnly = !showProblemsOnly;
+  document.querySelectorAll('tr[data-search]').forEach(tr => {
+    const p = parseInt(tr.getAttribute('data-problems') || '0');
+    tr.style.display = (showProblemsOnly && p === 0) ? 'none' : '';
+  });
+}
+</script>
   <div class="bwrap">
     <input type="hidden" name="broadcast" value="1">
     <input type="text" name="bcmd" placeholder="команда для выбранных машин, напр. sys:disks" value="<?= htmlspecialchars($bcmdSaved) ?>">

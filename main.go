@@ -972,18 +972,18 @@ func writeConnectionFile(cfg config) {
 // registryLine: "PC_NAME port time role username os_version free_disk_gb ram_load"
 // — the port is always field 2, time field 3 (backward compatible: дашборд
 // понимает и старые 4-польные строки).
-func registryLine(host string, port int, role string, when time.Time, username, osver string, diskGB int, ramLoad int, version string) string {
-	extra := fmt.Sprintf("%s %s %d %d %s", sanitizeLine(username), sanitizeLine(osver), diskGB, ramLoad, sanitizeLine(version))
+func registryLine(host string, port int, role string, when time.Time, username, osver string, diskGB, ramLoad, uptimeDays int, version string) string {
+	extra := fmt.Sprintf("%s %s %d %d %d %s", sanitizeLine(username), sanitizeLine(osver), diskGB, ramLoad, uptimeDays, sanitizeLine(version))
 	if username == "" || osver == "" || diskGB < 0 {
-		extra = "- - -1 -1 -"
+		extra = "- - -1 -1 - -1"
 	}
 	return fmt.Sprintf("%s %d %s %s %s", sanitizeLine(host), port, when.Format("02.01_15:04"), role, extra)
 }
 
-// telemetry: username/os/диск/память для расширенного heartbeat.
+// telemetry: username/os/диск/память/аптайм для расширенного heartbeat.
 // Платформенные реализации — в oem_windows.go / oem_other.go.
-func telemetry() (string, string, int, int) {
-	return nativeUsername(), nativeOSVersion(), nativeFreeDiskGB(), nativeMemoryLoad()
+func telemetry() (string, string, int, int, int) {
+	return nativeUsername(), nativeOSVersion(), nativeFreeDiskGB(), nativeMemoryLoad(), nativeUptimeDays()
 }
 
 // registerOnRelay appends a line to ~/online.txt on the relay so the list of
@@ -993,8 +993,8 @@ func registerOnRelay(client *gossh.Client, cfg config) {
 	if err != nil {
 		return
 	}
-	user, osver, disk, ram := telemetry()
-	line := registryLine(host, cfg.relayPort, cfg.role, time.Now(), user, osver, disk, ram, ownVersion())
+	user, osver, disk, ram, uptime := telemetry()
+	line := registryLine(host, cfg.relayPort, cfg.role, time.Now(), user, osver, disk, ram, uptime, ownVersion())
 
 	// быстрый путь: direct-tcpip к hbd на relay — ни одного процесса sh
 	if hc, derr := client.Dial("tcp", relayHBDaemon); derr == nil {

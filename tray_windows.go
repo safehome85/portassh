@@ -199,7 +199,7 @@ func readPersistedRelay() string { return defaultRelay }
 
 func trayAbout() {
 	ver := ownVersion()
-	user, _, _, _ := telemetry()
+	user, _, _, _, _ := telemetry()
 	msg := fmt.Sprintf("portassh — туннель удалённого доступа\r\n\r\nВерсия сборки: %s\r\nМашина: %s\r\nПользователь: %s\r\nRelay: %s",
 		ver, trayHost(), user, readPersistedRelay())
 	pText, _ := windows.UTF16PtrFromString(msg)

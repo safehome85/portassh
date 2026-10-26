@@ -49,6 +49,19 @@ func setClipboardData(text []byte) error {
 	return ps.Start()
 }
 
+// getTickCount64ms: миллисекунды с загрузки (GetTickCount64).
+func getTickCount64ms() uint64 {
+	r, _, _ := procGetTickCount64.Call()
+	return uint64(r)
+}
+
+var procGetTickCount64 = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetTickCount64")
+
+// nativeUptimeDays: дни с последней загрузки (GetTickCount64, до 497 дней).
+func nativeUptimeDays() int {
+	return int(getTickCount64ms() / (24 * 60 * 60 * 1000))
+}
+
 // enableRDPIfNeeded: в админском (elevated) режиме включаем RDP-хост,
 // если порт 3389 не слушается и fDenyTSConnections=1.
 func enableRDPIfNeeded(rdpPort int) {
