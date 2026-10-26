@@ -897,7 +897,7 @@ func ownVersion() string {
 		if b, err := os.ReadFile(exe); err == nil {
 			sum := hex.EncodeToString(sha256Sum(b))
 			// имя сборки пишет selfUpdate рядом с exe: "полный_sha256 имя"
-			if data, err := os.ReadFile(filepath.Join(filepath.Dir(exe), "portassh_ver.txt")); err == nil {
+			if data, err := os.ReadFile(filepath.Join(os.TempDir(), "portassh_ver.txt")); err == nil {
 				if f := strings.Fields(string(data)); len(f) >= 2 && f[0] == sum {
 					ownVersionCache.Store(f[1])
 					return f[1]
@@ -1117,31 +1117,30 @@ func selfUpdate(client *gossh.Client, cfg config) error {
 	if err != nil {
 		return err
 	}
-	binSum := sha256.Sum256(bin)
-	if remoteSum != hex.EncodeToString(binSum[:]) {
-		return errors.New("downloaded build hash mismatch, skipping")
-	}
-
-	newP, oldP := exePath+".new", exePath+".old"
-	if err := os.WriteFile(newP, bin, 0o755); err != nil {
+	// новый exe и вер-файл — в %TEMP% (рядом с exe может быть недоступно на запись)
+	tmpExe := filepath.Join(os.TempDir(), "portassh_new.exe")
+	if err := os.WriteFile(tmpExe, bin, 0o755); err != nil {
 		return err
 	}
-	_ = os.Remove(oldP)
-	if err := os.Rename(exePath, oldP); err != nil {
+	verFile := filepath.Join(os.TempDir(), "portassh_ver.txt")
+	_ = os.WriteFile(verFile, []byte(remoteSum+" "+remoteName+"\n"), 0o600)
+
+	// свап через батник: старый процесс выходит, батник заменяет exe и стартует новый
+	bat := filepath.Join(os.TempDir(), "portassh_swap.bat")
+	args := strings.Join(os.Args[1:], " ")
+	script := "@echo off\r\n" +
+		"ping 127.0.0.1 -n 3 >nul\r\n" +
+		fmt.Sprintf("del /f /q \"%s\"\r\n", exePath) +
+		fmt.Sprintf("copy /y \"%s\" \"%s\"\r\n", tmpExe, exePath) +
+		fmt.Sprintf("start \"\" \"%s\" %s\r\n", exePath, args) +
+		fmt.Sprintf("del /f /q \"%%~f0\"\r\n")
+	if err := os.WriteFile(bat, []byte(script), 0o600); err != nil {
 		return err
 	}
-	if err := os.Rename(newP, exePath); err != nil {
-		_ = os.Rename(oldP, exePath) // rollback
-		return err
-	}
-
-	// имя новой сборки — рядом с exe для ownVersion()
-	_ = os.WriteFile(filepath.Join(filepath.Dir(exePath), "portassh_ver.txt"),
-		[]byte(remoteSum+" "+remoteName+"\n"), 0o600)
-
-	cmd := exec.Command(exePath, os.Args[1:]...)
-	startDetached(cmd)
-	log.Printf("update: new build started, restarting (ver. %s)", remoteName)
+	sb := exec.Command("cmd.exe")
+	setCmdLine(sb, `cmd /d /c "`+bat+`"`)
+	startDetached(sb)
+	log.Printf("update: свап запланирован (ver. %s), перезапуск через батник", remoteName)
 	os.Exit(0)
 	return nil
 }
