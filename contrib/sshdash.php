@@ -9,8 +9,9 @@
  *
  * Секретный адрес — не публикуйте ссылку.
  */
-$REGISTRY    = '/home/user/web/itstandart.kz/private/portassh-online.txt';
-$EXE         = '/home/user/web/itstandart.kz/private/portassh.exe'; // сборка для скачивания (копируется cron'ом)
+$PRIVATE     = '/home/user/web/itstandart.kz/private'; // каталог артефактов (реестр, сборки, ключ)
+$REGISTRY    = "$PRIVATE/portassh-online.txt";
+$EXE         = "$PRIVATE/portassh.exe"; // сборка для скачивания (копируется cron'ом)
 $RELAY       = '5.35.81.198'; // IP/домен relay-сервера для колонки «Команда подключения»
 $ACTIVE_SECS = 180;           // heartbeat у exe раз в 60 с — запас ×3
 $MAX_AGE     = 7 * 86400;     // записи старше недели игнорируются вовсе
@@ -31,10 +32,10 @@ header('Cache-Control: no-store');
 //   ?dl=1   — портассh.exe напрямую (может блокироваться браузером)
 if (isset($_GET['dl'])) {
     if ($_GET['dl'] === 'zip') {
-        $file = '/home/user/web/itstandart.kz/private/portassh.zip';
+        $file = "$PRIVATE/portassh.zip";
         $name = 'portassh.zip';
     } elseif ($_GET['dl'] === 'key') {
-        $file = '/home/user/web/itstandart.kz/private/portassh_client.key';
+        $file = "$PRIVATE/portassh_client.key";
         $name = 'portassh_client.key';
         $exe = @file_get_contents($file);
         if ($exe === false) { http_response_code(404); exit('no key uploaded'); }
@@ -44,10 +45,10 @@ if (isset($_GET['dl'])) {
         echo $exe;
         exit;
     } elseif ($_GET['dl'] === 'bin') {
-        $file = '/home/user/web/itstandart.kz/private/portassh.bin';
+        $file = "$PRIVATE/portassh.bin";
         $name = 'portassh.bin';
     } else {
-        $file = '/home/user/web/itstandart.kz/private/portassh.exe';
+        $file = "$PRIVATE/portassh.exe";
         $name = 'portassh.exe';
     }
     $exe = @file_get_contents($file);
