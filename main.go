@@ -486,13 +486,30 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 	activeClient.Store(client)
 	defer activeClient.Store(nil)
 
+	// DPD: keepalive с жёстким локальным таймаутом 5 с. SendRequest без него
+	// висит минутами на «тихом» обрыве (смена Wi-Fi ↔ LTE, сон без события).
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
 		for range t.C {
-			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
-				// соединение умерло (сон, обрыв сети) — не ждём TCP-таймаут
-				_ = client.Close()
+			done := make(chan error, 1)
+			go func() {
+				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					// соединение умерло (сон, обрыв сети) — не ждём TCP-таймаут
+					log.Printf("tunnel: keepalive failed: %v", err)
+					resumeHint.Store(true) // коннект гарантированно мёртв
+					_ = client.Close()
+					return
+				}
+			case <-time.After(5 * time.Second):
+				log.Print("tunnel: keepalive DPD timeout (5s) — closing dead connection")
+				resumeHint.Store(true)
+				_ = client.Close() // разблокирует и подвисший SendRequest
 				return
 			}
 		}
