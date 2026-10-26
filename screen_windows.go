@@ -14,9 +14,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -199,6 +203,41 @@ func sendWheel(delta int) {
 	procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
 }
 
+// showToast: полупрозрачная плашка с сообщением пользователю (Forms,
+// автоскрытие 15 с). Текст передаётся файлом — без кавычечного ада.
+func showToast(text string) {
+	dir := exeDir()
+	stamp := time.Now().UnixNano()
+	msgFile := filepath.Join(dir, fmt.Sprintf("portassh_msg_%d.txt", stamp))
+	ps1 := filepath.Join(dir, fmt.Sprintf("portassh_toast_%d.ps1", stamp))
+	if err := os.WriteFile(msgFile, []byte(text), 0o600); err != nil {
+		return
+	}
+	script := "Add-Type -AssemblyName System.Windows.Forms\r\n" +
+		"Add-Type -AssemblyName System.Drawing\r\n" +
+		"$f = New-Object Windows.Forms.Form\r\n" +
+		"$f.FormBorderStyle = 'None'; $f.TopMost = $true; $f.Opacity = 0.92\r\n" +
+		"$f.StartPosition = 'Manual'; $f.Size = New-Object Drawing.Size(560, 96)\r\n" +
+		"$vs = [Windows.Forms.SystemInformation]::VirtualScreen\r\n" +
+		"$f.Location = New-Object Drawing.Point(($vs.Width - 580), 40)\r\n" +
+		"$f.BackColor = [Drawing.Color]::FromArgb(15, 23, 42)\r\n" +
+		"$l = New-Object Windows.Forms.Label\r\n" +
+		"$t = [IO.File]::ReadAllText('MSGPATH', [Text.Encoding]::UTF8)\r\n" +
+		"$l.Text = $t; $l.ForeColor = 'White'; $l.Dock = 'Fill'\r\n" +
+		"$l.TextAlign = 'MiddleCenter'; $l.Font = New-Object Drawing.Font('Segoe UI', 12)\r\n" +
+		"$f.Controls.Add($l)\r\n" +
+		"$timer = New-Object Windows.Forms.Timer; $timer.Interval = 15000\r\n" +
+		"$timer.Add_Tick({ $f.Close() }); $timer.Start()\r\n" +
+		"[void]$f.ShowDialog()\r\n" +
+		"Remove-Item 'MSGPATH','PS1PATH'\r\n"
+	script = strings.ReplaceAll(script, "MSGPATH", msgFile)
+	script = strings.ReplaceAll(script, "PS1PATH", ps1)
+	os.WriteFile(ps1, []byte(script), 0o600)
+	ps := exec.Command("powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", ps1)
+	ps.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	_ = ps.Start()
+}
+
 // typeText: печать текста юникод-событиями (кириллица работает).
 func typeText(text string) {
 	runes := []rune(text)
@@ -263,6 +302,12 @@ func execScreenInput(line string) {
 		if len(f) >= 2 {
 			if b, berr := base64.StdEncoding.DecodeString(f[1]); berr == nil && len(b) > 0 {
 				_ = setClipboardData(b)
+			}
+		}
+	case "msg":
+		if len(f) >= 2 {
+			if b, berr := base64.StdEncoding.DecodeString(f[1]); berr == nil && len(b) > 0 {
+				showToast(string(b))
 			}
 		}
 	case "wheel":

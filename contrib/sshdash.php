@@ -891,6 +891,8 @@ document.querySelectorAll('.pmi').forEach(el => {
       <div style="display:flex;gap:8px;align-items:center">
         <input type="text" id="scrtext" placeholder="текст с клавиатуры…" style="padding:6px 10px;border:1px solid #2a3040;border-radius:8px;background:#181d28;color:#e8eefc;font-size:13px;width:260px" onkeydown="if(event.key==='Enter')scrSendText()">
         <button onclick="scrSendText()" style="padding:6px 14px;background:#4f46e5;color:#fff;border:0;border-radius:8px;cursor:pointer">Отправить (печать)</button>
+        <input type="text" id="scrmsg" placeholder="сообщение пользователю…" style="padding:6px 10px;border:1px solid #2a3040;border-radius:8px;background:#181d28;color:#e8eefc;font-size:13px;width:240px" onkeydown="if(event.key==='Enter')scrToMsg()">
+        <button onclick="scrToMsg()" style="padding:6px 14px;background:#0891b2;color:#fff;border:0;border-radius:8px;cursor:pointer" title="всплывающее сообщение на экране пользователя">📢 Сообщение</button>
         <button onclick="scrToClip()" style="padding:6px 14px;background:#0ea5e9;color:#fff;border:0;border-radius:8px;cursor:pointer" title="текст из поля кладётся в буфер обмена машины — Ctrl+V вставит его">📋 В буфер машины</button>
         <a href="#" onclick="closeScreen();return false" style="color:#e8eefc;text-decoration:none;font-size:18px">✕</a>
       </div>
@@ -960,6 +962,12 @@ function scrRelease(e) {
   scrSendLine('release ' + scrCoords(e));
 }
 function scrRClick(e) { e.preventDefault(); scrSendLine('rclick ' + scrCoords(e)); }
+function scrToMsg() {
+  const t = document.getElementById('scrmsg').value;
+  if (!t) return;
+  scrSendLine('msg ' + btoa(unescape(encodeURIComponent('Инженер поддержки: ' + t))));
+  document.getElementById('scrmsg').value = '';
+}
 function scrToClip() {
   const t = document.getElementById('scrtext').value;
   if (!t) { alert('введи текст в поле'); return; }

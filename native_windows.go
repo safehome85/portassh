@@ -218,6 +218,19 @@ type memoryStatusEx struct {
 }
 
 func sysNative(s ssh.Session, sub string) bool {
+	// sys:msg <base64-utf8> — сообщение пользователю (плашка на экране)
+	if b64, ok := strings.CutPrefix(sub, "msg "); ok {
+		text, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+		if derr != nil || len(text) == 0 {
+			fmt.Fprintln(s, "sys: msg: пустой текст")
+			s.Exit(1)
+			return true
+		}
+		showToast(string(text))
+		fmt.Fprintln(s, "sys: сообщение показано пользователю")
+		s.Exit(0)
+		return true
+	}
 	// sys:clip <base64-utf8> — текст в буфер обмена машины (через PowerShell)
 	if b64, ok := strings.CutPrefix(sub, "clip "); ok {
 		text, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
