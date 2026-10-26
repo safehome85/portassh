@@ -139,7 +139,7 @@ foreach ($lines as $line) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right"><a class="dl" href="?dl=zip">⬇ Скачать .zip</a> &nbsp; <a class="dl" style="background:#60a5fa" href="?dl=bin">⬇ .bin</a> &nbsp; <a class="dl" style="background:#fbbf24" href="?dl=key">🔑 Ключ</a><div style="text-align:right;color:#cbd6ea;font-size:12px;margin-top:6px">пароль архива и SSH (резерв): <b>RtnM91jK.!</b></div></span></h1>';
+echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right"><a class="dl" href="?dl=zip">⬇ Скачать .zip</a> &nbsp; <a class="dl" style="background:#60a5fa" href="?dl=bin">⬇ .bin</a> &nbsp; <a class="dl" style="background:#fbbf24" href="?dl=key">🔑 Ключ</a> &nbsp; <a class="dl" style="background:#f59e0b" href="?force=1" title="клиенты проверят обновление в течение минуты">⟳ Обновить клиентов</a><div style="text-align:right;color:#cbd6ea;font-size:12px;margin-top:6px">пароль архива и SSH (резерв): <b>RtnM91jK.!</b></div></span></h1>';
 
 // ---- Описание и инструкция ----
 $PW = 'RtnM91jK.!';
