@@ -166,6 +166,13 @@ portassh подтверждает туннель каждую минуту; ма
 </ol>
 <p>Всё — вы на удалённом компьютере. С ключом пароль не спросится
 (пароль — запасной вариант, если ключа нет).</p>
+<p>Быстрая диагностика без шелла (мгновенно, не трогает cmd.exe):
+<span class="cmd">sys:whoami</span>,
+<span class="cmd">sys:hostname</span>,
+<span class="cmd">sys:procs</span> (процессы),
+<span class="cmd">sys:svcs</span> (службы),
+<span class="cmd">sys:disks</span> (место на дисках) —
+дописываются вместо команды: <span class="cmd">…anyuser@localhost "sys:disks"</span>.</p>
 <p style="font-size:13px;color:#cbd6ea">Команду можно запускать из любой папки, если
 в ней лежит portassh_client.key. Храните ключ только у себя — он заменяет пароль.</p>
 <p>Команда из таблицы выглядит так:</p>

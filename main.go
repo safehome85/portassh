@@ -354,8 +354,13 @@ func runExec(s ssh.Session, cfg config, raw string) {
 	timeout, detached, raw := splitExecOpts(raw)
 	// обычные команды — через постоянный шелл (антивирус не видит спавнов);
 	// timeout=/detached остаются на старом пути (нужен свой процесс)
-	if !detached && timeout == 0 && execViaPool(s, raw) {
-		return
+	if !detached && timeout == 0 {
+		if strings.HasPrefix(raw, "sys:") && sysNative(s, strings.TrimPrefix(raw, "sys:")) {
+			return
+		}
+		if execViaPool(s, raw) {
+			return
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
