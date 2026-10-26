@@ -26,3 +26,4 @@ build.ver
 portassh_client_key*
 contrib/hbd/hbd
 contrib/wsterm/wsterm
+contrib/hbd/hbd.linux_amd64

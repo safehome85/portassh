@@ -24,18 +24,18 @@ const (
 
 // Модели по умолчанию
 var defaultFreeModelsOpenRouter = []string{
-	"meta-llama/llama-3.3-70b-instruct:free",
-	"google/gemini-2.0-flash-exp:free",
-	"deepseek/deepseek-r1:free",
-	"qwen/qwen-2.5-coder-32b-instruct:free",
-	"mistralai/mistral-small-24b-instruct-2501:free",
+	"openrouter/auto",
+	"nvidia/nemotron-3.5-lightning:free",
+	"recursive/flint-v1.0:free",
+	"cohere/north-mini-code:free",
+	"google/gemma-4-31b-it:free",
 }
 
 var defaultGoogleAIModels = []string{
-	"gemini-2.0-flash-exp",
-	"gemini-1.5-flash",
-	"gemini-1.5-pro",
-	"gemini-2.0-flash-thinking-exp-1219",
+	"gemini-2.5-flash",
+	"gemini-2.5-pro",
+	"gemini-flash-latest",
+	"gemini-flash-lite-latest",
 }
 
 type aiConfigResponse struct {
@@ -459,7 +459,7 @@ func resolveProvider(provider, model, customKey string) (apiKey, apiURL, resolve
 		apiKey = readAPIKey(customKey, googleAIKeyFile, "GEMINI_API_KEY")
 		apiURL = googleAIURL
 		if model == "" {
-			model = "gemini-2.0-flash-exp"
+			model = "gemini-2.5-flash"
 		}
 		return apiKey, apiURL, model
 	}
@@ -467,7 +467,7 @@ func resolveProvider(provider, model, customKey string) (apiKey, apiURL, resolve
 	apiKey = readAPIKey(customKey, openRouterKeyFile, "OPENROUTER_API_KEY")
 	apiURL = openRouterURL
 	if model == "" {
-		model = "meta-llama/llama-3.3-70b-instruct:free"
+		model = "openrouter/auto"
 	}
 	return apiKey, apiURL, model
 }

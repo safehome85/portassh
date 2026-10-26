@@ -1296,7 +1296,7 @@ function evAIAnalyze() {
   cnt.innerHTML = '<div style="color:#7c3aed;padding:12px">🤖 Анализирую журнал ' + evChannel + ' через AI…</div>';
 
   const prov = localStorage.getItem('pssh_ai_prov') || 'openrouter';
-  const model = localStorage.getItem('pssh_ai_model_' + prov) || (prov === 'google' ? 'gemini-2.0-flash-exp' : 'meta-llama/llama-3.3-70b-instruct:free');
+  const model = localStorage.getItem('pssh_ai_model_' + prov) || (prov === 'google' ? 'gemini-2.5-flash' : 'openrouter/auto');
   const key = localStorage.getItem('pssh_ai_key_' + prov) || '';
 
   fetch('?ai_explain_events=1', {
@@ -1327,17 +1327,17 @@ function evAIAnalyze() {
 // ---- AI SysAdmin Copilot ----
 const aiModelsMap = {
   openrouter: [
-    { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B [Free]' },
-    { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash [Free]' },
-    { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 [Free]' },
-    { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen 2.5 Coder 32B [Free]' },
-    { id: 'mistralai/mistral-small-24b-instruct-2501:free', name: 'Mistral Small 24B [Free]' }
+    { id: 'openrouter/auto', name: 'OpenRouter Auto [Рекомендуется]' },
+    { id: 'nvidia/nemotron-3.5-lightning:free', name: 'Nemotron 3.5 Lightning [Free]' },
+    { id: 'recursive/flint-v1.0:free', name: 'Flint v1.0 [Free]' },
+    { id: 'cohere/north-mini-code:free', name: 'Cohere North Mini Code [Free]' },
+    { id: 'google/gemma-4-31b-it:free', name: 'Gemma 4 31B IT [Free]' }
   ],
   google: [
-    { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (AI Studio)' },
-    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (AI Studio)' },
-    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (AI Studio)' },
-    { id: 'gemini-2.0-flash-thinking-exp-1219', name: 'Gemini 2.0 Flash Thinking' }
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (AI Studio)' },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (AI Studio)' },
+    { id: 'gemini-flash-latest', name: 'Gemini Flash Latest' },
+    { id: 'gemini-flash-lite-latest', name: 'Gemini Flash-Lite' }
   ]
 };
 
