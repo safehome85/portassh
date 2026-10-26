@@ -69,13 +69,14 @@ const (
 	serverHostKeyB64 = "$HPUB_B64"
 	serverHostPub    = "$HPUB_LINE"
 
-	allowedClientPubKeys = []string{
-		"$CPUB",
-	}
-
 	// парольный вход с машин без ключа (менять можно в любой момент)
 	allowedClientPassword = "$CPASS"
 )
+
+// клиентские ключи, принимаемые встроенным сервером (слайс не может быть const)
+var allowedClientPubKeys = []string{
+	"$CPUB",
+}
 EOF
 
 echo "baked.go created (ed25519 keys)."
