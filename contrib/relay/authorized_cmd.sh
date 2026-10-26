@@ -13,16 +13,25 @@ case "$C" in
     ;;
 esac
 
-# 2) регистрация машины (fallback, если hbd недоступен)
+# 2) регистрация машины (fallback, если hbd недоступен) — оба варианта пути
 case "$C" in
-  "umask 022 && echo '"*"' >> /home/portassh/online.txt")
-    line=$(printf '%s' "$C" | sed -e "s/^umask 022 && echo '//" -e "s/' >> \/home\/portassh\/online.txt\$//")
+  "umask 022 && echo '"*"' >> /home/portassh/online.txt"|\
+  "umask 022 && echo '"*"' >> ~/online.txt")
+    line=$(printf '%s' "$C" | sed -e "s/^umask 022 && echo '//" -e "s/' >> .*online.txt\$//")
     set -- $line
     [ $# -ge 4 ] || { echo "portassh: bad registry line" >&2; exit 111; }
     case "$4" in
       user|admin) printf '%s\n' "$line" >> "$REG"; exit 0 ;;
       *) echo "portassh: bad role" >&2; exit 111 ;;
     esac
+    ;;
+  # graceful shutdown: удаление своих строк реестра (имя из sanitizeLine)
+  sed\ -i\ *online.txt)
+    H=$(printf '%s' "$C" | sed -n "s|^sed -i '/^\([^ ]*\) /d'.*|\1|p")
+    case $H in
+      *[!A-Za-z0-9._-]*|"") echo "portassh: bad hostname" >&2; exit 111 ;;
+    esac
+    exec sh -c "sed -i '/^$H /d' /home/portassh/online.txt"
     ;;
 esac
 

