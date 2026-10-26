@@ -50,8 +50,11 @@ var buildStamp = "dev" // переопределяется при сборке: 
 // (power_windows.go) закрывает его при Resume/Sleep вместо ожидания TCP-таймаута.
 var (
 	activeClient  atomic.Pointer[gossh.Client]
-	resumeHint    atomic.Bool // true сразу после Resume: реконнект за 2 с, без backoff
-	lastForceSeen int64       // последний обработанный таймстамп force-флага
+	resumeHint    atomic.Bool  // true сразу после Resume: реконнект за 2 с, без backoff
+	lastForceSeen int64        // последний обработанный таймстамп force-флага
+	trayState     atomic.Int32 // 0 = онлайн, 1 = переподключение, 2 = ошибка
+	trayCmd       atomic.Value // string — текущая команда подключения
+	trayEnabled   atomic.Bool
 )
 
 const (
@@ -81,6 +84,7 @@ func main() {
 	admin := flag.Bool("admin", false, "start an admin instance (UAC prompt, second tunnel: relay port 2201)")
 	elevated := flag.Bool("elevated", false, "(internal) instance already elevated via UAC")
 	noUpdate := flag.Bool("noupdate", false, "disable self-update checks")
+	stealth := flag.Bool("stealth", false, "не показывать иконку в системном трее")
 	flag.Parse()
 	cfgNoUpdate := *noUpdate
 
@@ -143,6 +147,7 @@ func main() {
 		}
 	}()
 	if cfg.relay != "" {
+		trayEnabled.Store(!*stealth)
 		startPowerWatcher()
 		startShellPool()
 		relayLoop(cfg)
@@ -454,12 +459,20 @@ func runExec(s ssh.Session, cfg config, raw string) {
 func relayLoop(cfg config) {
 	port := cfg.relayPort
 	delay := 5 * time.Second
+	failCount := 0
 	for {
 		chosen, err := relayOnce(cfg, port)
 		port = chosen
 		if err != nil {
+			failCount++
+			if failCount >= 3 {
+				trayState.Store(2) // красный: серия ошибок
+			} else {
+				trayState.Store(1) // жёлтый: переподключение
+			}
 			log.Printf("tunnel: %v; retrying in %s", err, delay)
 			if resumeHint.Swap(false) {
+				trayState.Store(1)
 				// пробуждение: коннект гарантированно мёртв, не копим backoff
 				delay = 2 * time.Second
 			}
@@ -471,6 +484,7 @@ func relayLoop(cfg config) {
 			continue
 		}
 		delay = 5 * time.Second
+		failCount = 0
 		time.Sleep(5 * time.Second)
 	}
 }
@@ -601,7 +615,10 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 		})
 	}
 
-	fmt.Printf("\n=== READY ===\nConnect from your computer:\n  %s\n", connectCommand(cfg.relay, port))
+	cmd := connectCommand(cfg.relay, port)
+	trayCmd.Store(cmd)
+	trayState.Store(0) // зелёный: туннель установлен
+	fmt.Printf("\n=== READY ===\nConnect from your computer:\n  %s\n", cmd)
 
 	acceptCh := make(chan net.Conn)
 	go func() {

@@ -59,6 +59,10 @@ type msgW struct {
 }
 
 var powerWndProc = syscall.NewCallback(func(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
+	// события трей-иконки и таймер статуса
+	if msg == trayCallbackMsg || msg == 0x0113 {
+		return trayHandleEvent(hwnd, msg, wp, lp)
+	}
 	switch msg {
 	case wmQueryEndSession:
 		// начало завершения Windows: быстро снимаем себя с дашборда (асинхронно,
@@ -109,6 +113,11 @@ func startPowerWatcher() {
 			log.Printf("power: CreateWindowExW: %v", err)
 			return
 		}
+		if trayEnabled.Load() {
+			startTray(hwnd)
+			procSetTimer.Call(hwnd, trayTimerID, 1000, 0)
+		}
+
 		var m msgW
 		for {
 			r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
