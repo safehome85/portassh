@@ -13,9 +13,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"reflect"
+	"os/exec"
+	"path/filepath"
 	"syscall"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -184,43 +184,15 @@ func trayCopyCommand(hwnd uintptr) {
 	if cmd == "" {
 		cmd = connectCommand(readPersistedRelay(), readPersistedPort())
 	}
-	p, _ := syscall.UTF16FromString(cmd + "\r\n")
-	n := len(p) * 2
-	hRaw, _, _ := procGlobalAlloc.Call(0x0002 /*GMEM_MOVEABLE*/, uintptr(n))
-	if hRaw == 0 {
+	// буфер через PowerShell: нативный путь ломался об кодировки/буферы
+	tmp := filepath.Join(os.TempDir(), "portassh_clip.txt")
+	if err := os.WriteFile(tmp, []byte(cmd), 0o600); err != nil {
 		return
 	}
-	// OpenClipboard часто занят менеджерами буфера обмена — без retry
-	// блокируется поток окна и трей «умирает» после первого клика
-	opened := false
-	for i := 0; i < 10 && !opened; i++ {
-		if r, _, _ := procOpenClipboard.Call(hwnd); r != 0 {
-			opened = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if !opened {
-		procGlobalFree.Call(hRaw)
-		log.Print("tray: clipboard busy, copy skipped")
-		return
-	}
-	procEmptyClipboard.Call()
-
-	// vet-whitelisted запись в HGLOBAL: reflect.SliceHeader.Data
-	// (правило 6 unsafe.Pointer — единственный чистый путь без спавнов)
-	tmp := make([]byte, n)
-	sh := (*reflect.SliceHeader)(unsafe.Pointer(&tmp))
-	sh.Data = hRaw
-	dstBuf := (*[1 << 28]byte)(unsafe.Pointer(sh.Data))[:n:n]
-	for i, c := range p {
-		dstBuf[i*2] = byte(c)
-		dstBuf[i*2+1] = byte(c >> 8)
-	}
-
-	procGlobalUnlock.Call(hRaw)
-	procSetClipboardData.Call(13 /*CF_UNICODETEXT*/, hRaw) // владение — у буфера обмена
-	procCloseClipboard.Call()
+	ps := exec.Command("powershell", "-NoProfile", "-Command",
+		fmt.Sprintf("Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 '%s'); Remove-Item '%s'", tmp, tmp))
+	ps.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	_ = ps.Start()
 }
 
 func readPersistedRelay() string { return defaultRelay }

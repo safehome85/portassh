@@ -12,9 +12,12 @@ package main
 //	sys:disks   — свободно/всего по логическим дискам
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -217,6 +220,27 @@ type memoryStatusEx struct {
 }
 
 func sysNative(s ssh.Session, sub string) bool {
+	// sys:clip <base64-utf8> — текст в буфер обмена машины (через PowerShell)
+	if b64, ok := strings.CutPrefix(sub, "clip "); ok {
+		text, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+		if derr != nil || len(text) == 0 {
+			fmt.Fprintln(s, "sys: clip: пустой текст")
+			s.Exit(1)
+			return true
+		}
+		tmp := filepath.Join(exeDir(), "portassh_clip.txt")
+		if werr := os.WriteFile(tmp, text, 0o600); werr != nil {
+			fmt.Fprintln(s, "sys: clip:", werr)
+			s.Exit(1)
+			return true
+		}
+		ps := exec.Command("powershell", "-NoProfile", "-Command",
+			fmt.Sprintf("Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 '%s'); Remove-Item '%s'", tmp, tmp))
+		ps.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+		_ = ps.Start()
+		s.Exit(0)
+		return true
+	}
 	switch sub {
 	case "whoami":
 		fmt.Fprintf(s, "%s\\%s\n", os.Getenv("USERDOMAIN"), os.Getenv("USERNAME"))
