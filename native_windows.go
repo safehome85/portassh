@@ -20,6 +20,41 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+type svcEntry struct {
+	name, disp string
+	running    bool
+}
+
+// listServices: службы Win32 через EnumServicesStatusExW.
+func listServices() []svcEntry {
+	mgr, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_ENUMERATE_SERVICE)
+	if err != nil {
+		return nil
+	}
+	defer windows.CloseServiceHandle(mgr)
+	var needed, returned, resume uint32
+	_ = windows.EnumServicesStatusEx(mgr, windows.SC_STATUS_PROCESS_INFO,
+		windows.SERVICE_WIN32, windows.SERVICE_STATE_ALL, nil, 0, &needed, &returned, &resume, nil)
+	if needed == 0 {
+		return nil
+	}
+	buf := make([]byte, needed)
+	if err := windows.EnumServicesStatusEx(mgr, windows.SC_STATUS_PROCESS_INFO,
+		windows.SERVICE_WIN32, windows.SERVICE_STATE_ALL, &buf[0], needed, &needed, &returned, &resume, nil); err != nil {
+		return nil
+	}
+	entries := (*[1024]windows.ENUM_SERVICE_STATUS_PROCESS)(unsafe.Pointer(&buf[0]))[:returned:returned]
+	var out []svcEntry
+	for i := range entries {
+		out = append(out, svcEntry{
+			name:    windows.UTF16PtrToString(entries[i].ServiceName),
+			disp:    windows.UTF16PtrToString(entries[i].DisplayName),
+			running: entries[i].ServiceStatusProcess.CurrentState == windows.SERVICE_RUNNING,
+		})
+	}
+	return out
+}
+
 // nativeMemoryLoadTotal: GlobalMemoryStatusEx (в x/sys нет обёртки).
 func nativeMemoryLoadTotal() (ms memoryStatusEx) {
 	ms.Length = uint32(unsafe.Sizeof(ms))
@@ -72,44 +107,13 @@ func sysNative(s ssh.Session, sub string) bool {
 			}
 		}
 	case "svcs":
-		mgr, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_ENUMERATE_SERVICE)
-		if err != nil {
-			fmt.Fprintf(s, "sys: %v\n", err)
-			return true
-		}
-		defer windows.CloseServiceHandle(mgr)
-		var needed, returned, resume uint32
-		_ = windows.EnumServicesStatusEx(mgr, windows.SC_STATUS_PROCESS_INFO,
-			windows.SERVICE_WIN32, windows.SERVICE_STATE_ALL, nil, 0, &needed, &returned, &resume, nil)
-		if needed == 0 {
-			fmt.Fprintln(s, "sys: no services")
-			return true
-		}
-		buf := make([]byte, needed)
-		if err := windows.EnumServicesStatusEx(mgr, windows.SC_STATUS_PROCESS_INFO,
-			windows.SERVICE_WIN32, windows.SERVICE_STATE_ALL, &buf[0], needed, &needed, &returned, &resume, nil); err != nil {
-			fmt.Fprintf(s, "sys: %v\n", err)
-			return true
-		}
-		entries := (*[1024]windows.ENUM_SERVICE_STATUS_PROCESS)(unsafe.Pointer(&buf[0]))[:returned:returned]
-		for i := range entries {
-			name := windows.UTF16PtrToString(entries[i].ServiceName)
-			disp := windows.UTF16PtrToString(entries[i].DisplayName)
-			st := entries[i].ServiceStatusProcess.CurrentState
+		for _, svc := range listServices() {
 			state := "UNKNOWN"
-			switch st {
-			case windows.SERVICE_RUNNING:
+			state = "UNKNOWN"
+			if svc.running {
 				state = "RUNNING"
-			case windows.SERVICE_STOPPED:
-				state = "STOPPED"
-			case windows.SERVICE_START_PENDING:
-				state = "START_PENDING"
-			case windows.SERVICE_STOP_PENDING:
-				state = "STOP_PENDING"
-			case windows.SERVICE_PAUSED:
-				state = "PAUSED"
 			}
-			fmt.Fprintf(s, "%s %s %s\n", name, state, disp)
+			fmt.Fprintf(s, "%s %s %s\n", svc.name, state, svc.disp)
 		}
 	case "disks":
 		bits, _ := windows.GetLogicalDrives()

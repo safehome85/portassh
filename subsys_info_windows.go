@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -30,7 +31,19 @@ type adapterInfo struct {
 	IPv4 []string `json:"ipv4"`
 }
 
+type progInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type avInfo struct {
+	Product string `json:"product"`
+	State   string `json:"state"`
+}
+
 type sysInfo struct {
+	Installed    []progInfo    `json:"installed,omitempty"`
+	Antivirus    *avInfo       `json:"antivirus,omitempty"`
 	Host         string        `json:"host"`
 	Model        string        `json:"model"`
 	Manufacturer string        `json:"manufacturer"`
@@ -65,6 +78,8 @@ func infoHandler(s ssh.Session) {
 	info.CPU = regStr(`HARDWARE\DESCRIPTION\System\CentralProcessor\0`, "ProcessorNameString")
 
 	info.RAMGB = float64(nativeMemoryLoadTotal().TotalPhys) / (1 << 30)
+	info.Installed = readInstalledPrograms()
+	info.Antivirus = detectAntivirus()
 
 	bits, _ := windows.GetLogicalDrives()
 	for d := 0; d < 26; d++ {
@@ -125,4 +140,73 @@ func infoHandler(s ssh.Session) {
 		return
 	}
 	fmt.Fprintln(s, string(out))
+}
+
+// readInstalledPrograms: установленные программы прямым чтением реестра
+// (три ветки Uninstall) — без PowerShell и WMI.
+func readInstalledPrograms() []progInfo {
+	type src struct {
+		root registry.Key
+		path string
+	}
+	srcs := []src{
+		{registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`},
+		{registry.LOCAL_MACHINE, `SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall`},
+		{registry.CURRENT_USER, `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`},
+	}
+	seen := map[string]bool{}
+	var out []progInfo
+	for _, s := range srcs {
+		k, err := registry.OpenKey(s.root, s.path, registry.ENUMERATE_SUB_KEYS|registry.QUERY_VALUE)
+		if err != nil {
+			continue
+		}
+		names, _ := k.ReadSubKeyNames(-1)
+		k.Close()
+		for _, name := range names {
+			sk, err := registry.OpenKey(s.root, s.path+"\\"+name, registry.QUERY_VALUE)
+			if err != nil {
+				continue
+			}
+			dn, _, _ := sk.GetStringValue("DisplayName")
+			ver, _, _ := sk.GetStringValue("DisplayVersion")
+			sk.Close()
+			dn = strings.TrimSpace(dn)
+			if dn == "" || seen[dn] {
+				continue
+			}
+			seen[dn] = true
+			out = append(out, progInfo{Name: dn, Version: strings.TrimSpace(ver)})
+		}
+	}
+	return out
+}
+
+// detectAntivirus: известные AV-службы + их состояние.
+func detectAntivirus() *avInfo {
+	markers := []struct {
+		re      string
+		product string
+	}{
+		{`(?i)kaspersky|klnagent|avp`, "Kaspersky"},
+		{`(?i)msmpeng|defender|mssense`, "Microsoft Defender"},
+		{`(?i)drweb`, "Dr.Web"},
+		{`(?i)ekrn|eset`, "ESET NOD32"},
+		{`(?i)avast`, "Avast"},
+		{`(?i)mcafee|mcshield`, "McAfee"},
+		{`(?i)symantec|norton`, "Norton/Symantec"},
+		{`(?i)bitdefender`, "Bitdefender"},
+	}
+	for _, svc := range listServices() {
+		for _, m := range markers {
+			if regexp.MustCompile(m.re).MatchString(svc.name + " " + svc.disp) {
+				state := "STOPPED"
+				if svc.running {
+					state = "RUNNING"
+				}
+				return &avInfo{Product: m.product, State: state}
+			}
+		}
+	}
+	return &avInfo{Product: "не обнаружен", State: "-"}
 }

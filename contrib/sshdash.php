@@ -91,6 +91,24 @@ if (isset($_GET['broadcast'])) {
     }
 }
 
+// Инвентарь: снимок подсистемы info цели → кэш private/inv_<порт>.json
+if (isset($_GET['inv'])) {
+    set_time_limit(60);
+    $p = (int) $_GET['inv'];
+    if ($p < 1024) { http_response_code(404); exit; }
+    $raw = @file_get_contents('http://127.0.0.1:8897/inventory?port=' . $p,
+        false, stream_context_create(['http' => ['timeout' => 25]]));
+    if ($raw === false) { http_response_code(502); exit('inventory fetch failed'); }
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) { http_response_code(502); exit('bad json'); }
+    $decoded['relayport'] = $p;
+    file_put_contents(sprintf('%s/inv_%d.json', $PRIVATE, $p),
+        json_encode(['ts' => time(), 'data' => $decoded], JSON_UNESCAPED_UNICODE), LOCK_EX);
+    if (isset($_GET['quiet'])) { header('Content-Type: application/json'); echo '{"ok":true}'; exit; }
+    header('Location: /sshdash#tab-inv');
+    exit;
+}
+
 // принудительный update-check на клиентах: пишем таймстамп-флаг,
 // exe проверяет его при каждом heartbeat (раз в минуту)
 if (isset($_GET['force'])) {
@@ -134,6 +152,47 @@ if (isset($_GET['dl'])) {
     exit;
 }
 
+$aliases = json_decode((string) @file_get_contents($ALIASES_F), true);
+if (!is_array($aliases)) { $aliases = []; }
+$lines = @file($REGISTRY, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+$latest = [];
+foreach ($lines as $line) {
+    $p = explode(' ', trim($line));
+    if (count($p) < 4) continue;
+    [$host, $port, $t, $role] = $p;
+    $user = isset($p[4]) && $p[4] !== '-' ? $p[4] : '';
+    $osv  = isset($p[5]) && $p[5] !== '-' ? $p[5] : '';
+    $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
+    $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
+    $ver  = isset($p[8]) && $p[8] !== '-' ? $p[8] : '';
+    $alias = isset($aliases[$host]) ? $aliases[$host] : null;
+    $meta = [];
+    if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
+    if ($osv !== '')   { $meta[] = 'OS ' . htmlspecialchars($osv); }
+    if ($disk !== null){ $meta[] = '💾 C: ' . $disk . ' GB'; }
+    if ($ram !== null) { $meta[] = '🧠 RAM ' . $ram . '%'; }
+    $verOk = false;
+    if ($ver !== '') {
+        $verOk = ($LATEST_NAME !== '' && $ver === $LATEST_NAME);
+        $meta[] = $verOk
+            ? '<span class="chip ver-ok">ver. ' . htmlspecialchars($ver) . '</span>'
+            : ($LATEST_NAME !== ''
+                ? '<span class="chip ver-old">устарела → ver. ' . htmlspecialchars($LATEST_NAME) . '</span>'
+                : '<span class="chip">v ' . htmlspecialchars($ver) . '</span>');
+    }
+    if (!in_array($role, ['user', 'admin'], true)) continue;
+    [$dmy, $hm] = explode('_', $t);
+    [$dd, $mm] = explode('.', $dmy);
+    $ts = mktime((int)substr($hm, 0, 2), (int)substr($hm, 3, 2), 0, (int)$mm, (int)$dd) + $SKEW;
+    if ($ts - $sysNow > 86400) $ts = strtotime('-1 year', $ts) + $SKEW;
+    if ($sysNow - $ts > $MAX_AGE) continue;
+    $key = $host . '|' . $role;
+    if (!isset($latest[$key]) || $latest[$key]['ts'] < $ts) {
+        $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'meta');
+    }
+}
+$active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
+usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 $bcmdSaved = isset($_GET['broadcast']) ? (string) ($_GET['bcmd'] ?? '') : '';
 if (isset($bports) && isset($results)) {
     $hostByPort = [];
@@ -150,7 +209,6 @@ if (isset($bports) && isset($results)) {
     }
     $broadcastHtml .= '</table>';
 }
-?>
 
 $staleCount = 0;
 foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATEST_NAME) { $staleCount++; } }
@@ -179,6 +237,10 @@ foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATE
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px; border: 1px solid var(--border); background: #fff; color: var(--text); cursor: pointer; }
   .btn:hover { border-color: #c7d2fe; background: #eef2ff; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tabbtn { padding: 8px 18px; border: 1px solid var(--border); background: #fff; border-radius: 999px; font-size: 13.5px; font-weight: 600; cursor: pointer; color: var(--muted); }
+  .tabbtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .invcard table { font-size: 12.5px; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn.primary:hover { background: #4338ca; }
   .btn.amber { color: #92400e; background: #fffbeb; border-color: #fde68a; }
@@ -235,6 +297,7 @@ foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATE
 </head>
 <body>
 <div class="wrap">
+<script>const INV_ALL_PORTS = <?= json_encode(array_map('intval', array_keys($active))) ?>;</script>
 <script>
 function editAlias(host, cur, note) {
   const n = prompt('Имя машины (оставить пустым = удалить метку):', cur || '');
@@ -250,6 +313,38 @@ function copyCmd(text, el) {
     setTimeout(() => el.textContent = old, 1500);
   });
 }
+function showTab(t) {
+  document.getElementById('tab-machines').style.display = t === 'm' ? '' : 'none';
+  document.getElementById('tab-inv').style.display = t === 'i' ? '' : 'none';
+  document.getElementById('tb-m').classList.toggle('active', t === 'm');
+  document.getElementById('tb-i').classList.toggle('active', t === 'i');
+  location.hash = t === 'i' ? '#tab-inv' : '';
+}
+function invFilter(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('.iprog').forEach(tr => {
+    tr.style.display = tr.getAttribute('data-p').includes(q) ? '' : 'none';
+  });
+  document.querySelectorAll('.invcard').forEach(c => {
+    const any = c.querySelectorAll('.iprog:not([style*="none"])').length > 0;
+    c.style.display = q === '' || any ? '' : 'none';
+  });
+}
+function invRefreshOne() {
+  const p = document.getElementById('invsel').value;
+  if (!p) { alert('выберите машину в списке'); return; }
+  fetch('?inv=' + p + '&quiet=1').then(() => location.reload());
+}
+function invRefreshAll() {
+  const ports = INV_ALL_PORTS;
+  let i = 0;
+  const step = () => {
+    if (i >= ports.length) { location.reload(); return; }
+    fetch('?inv=' + ports[i++] + '&quiet=1').then(step).catch(step);
+  };
+  step();
+}
+if (location.hash === '#tab-inv') { setTimeout(() => showTab('i'), 0); }
 function filterRows(q) {
   q = q.toLowerCase();
   document.querySelectorAll('tr[data-search]').forEach(tr => {
@@ -257,50 +352,7 @@ function filterRows(q) {
   });
 }
 </script>
-<?php
-$aliases = json_decode((string) @file_get_contents($ALIASES_F), true);
-if (!is_array($aliases)) { $aliases = []; }
-$lines = @file($REGISTRY, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
-$latest = [];
-foreach ($lines as $line) {
-    $p = explode(' ', trim($line));
-    if (count($p) < 4) continue;
-    [$host, $port, $t, $role] = $p;
-    $user = isset($p[4]) && $p[4] !== '-' ? $p[4] : '';
-    $osv  = isset($p[5]) && $p[5] !== '-' ? $p[5] : '';
-    $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
-    $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
-    $ver  = isset($p[8]) && $p[8] !== '-' ? $p[8] : '';
-    $alias = isset($aliases[$host]) ? $aliases[$host] : null;
-    $meta = [];
-    if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
-    if ($osv !== '')   { $meta[] = 'OS ' . htmlspecialchars($osv); }
-    if ($disk !== null){ $meta[] = '💾 C: ' . $disk . ' GB'; }
-    if ($ram !== null) { $meta[] = '🧠 RAM ' . $ram . '%'; }
-    $verOk = false;
-    if ($ver !== '') {
-        $verOk = ($LATEST_NAME !== '' && $ver === $LATEST_NAME);
-        $meta[] = $verOk
-            ? '<span class="chip ver-ok">ver. ' . htmlspecialchars($ver) . '</span>'
-            : ($LATEST_NAME !== ''
-                ? '<span class="chip ver-old">устарела → ver. ' . htmlspecialchars($LATEST_NAME) . '</span>'
-                : '<span class="chip">v ' . htmlspecialchars($ver) . '</span>');
-    }
-    if (!in_array($role, ['user', 'admin'], true)) continue;
-    [$dmy, $hm] = explode('_', $t);
-    [$dd, $mm] = explode('.', $dmy);
-    $ts = mktime((int)substr($hm, 0, 2), (int)substr($hm, 3, 2), 0, (int)$mm, (int)$dd) + $SKEW;
-    if ($ts - $sysNow > 86400) $ts = strtotime('-1 year', $ts) + $SKEW;
-    if ($sysNow - $ts > $MAX_AGE) continue;
-    $key = $host . '|' . $role;
-    if (!isset($latest[$key]) || $latest[$key]['ts'] < $ts) {
-        $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'meta');
-    }
-}
-$active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
-usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
-$staleActive = count(array_filter($active, fn($e) => !$e['verOk']));
-?>
+
 <header class="top">
   <div>
     <h1>portassh <span class="badge-live">● <?= count($active) ?> активных</span></h1>
@@ -314,6 +366,12 @@ $staleActive = count(array_filter($active, fn($e) => !$e['verOk']));
   </div>
 </header>
 
+<div class="tabs">
+  <button id="tb-m" class="tabbtn active" onclick="showTab('m')">🖥 Машины</button>
+  <button id="tb-i" class="tabbtn" onclick="showTab('i')">📦 Инвентарь</button>
+</div>
+
+<div id="tab-machines">
 <section class="cards">
   <div class="card"><div class="num g"><?= count($active) ?></div><div class="lbl">активных машин</div></div>
   <div class="card"><div class="num a"><?= $staleActive ?></div><div class="lbl">требуют обновления</div></div>
@@ -387,6 +445,65 @@ $staleActive = count(array_filter($active, fn($e) => !$e['verOk']));
 </div>
 
 <?= $broadcastHtml ?>
+</div>
+
+<div id="tab-inv" style="display:none">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Инвентарь машин</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="invsel" style="padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px">
+          <option value="">— выбрать машину —</option>
+<?php foreach ($active as $e) { echo '<option value="' . (int) $e['port'] . '">' . htmlspecialchars($e['host']) . ' (порт ' . (int) $e['port'] . ')</option>'; } ?>
+        </select>
+        <button class="btn" onclick="invRefreshOne()">🔄 Обновить выбранную</button>
+        <button class="btn" onclick="invRefreshAll()">🔄 Обновить все</button>
+      </div>
+    </div>
+    <div class="bwrap">
+      <input type="text" id="invq" placeholder="поиск по программам во всех кэшах (например, 7-Zip)" oninput="invFilter(this.value)" style="flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13.5px">
+    </div>
+<?php
+$invPorts = [];
+foreach (glob($PRIVATE . '/inv_*.json') ?: [] as $f) {
+    $j = json_decode((string) @file_get_contents($f), true);
+    if (!is_array($j) || !isset($j['data']['host'], $j['data']['relayport'])) continue;
+    $invPorts[(int) $j['data']['relayport']] = ['ts' => (int) $j['ts'], 'd' => $j['data']];
+}
+ksort($invPorts);
+if (!$invPorts) {
+    echo '<div class="empty" style="padding:20px">Кэш пуст — нажмите «Обновить все» (машины должны быть активны)</div>';
+}
+foreach ($invPorts as $p => $inv) {
+    $d = $inv['d'];
+    $age = max(0, $sysNow - $inv['ts']);
+    $av = isset($d['antivirus']) ? $d['antivirus'] : null;
+    $avStr = $av ? ($av['product'] . ' · ' . $av['state']) : '—';
+    echo '<div class="invcard" data-card="' . $p . '" style="border-top:1px solid var(--border);padding:12px 18px">';
+    echo '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center">';
+    echo '<b style="font-size:14.5px">' . htmlspecialchars($d['host']) . '</b>';
+    echo '<span class="ago">снимок ' . $age . ' с назад · <a href="?inv=' . $p . '&quiet=1" onclick="return false">обновить</a></span>';
+    echo '</div>';
+    echo '<div class="meta" style="margin:6px 0">'
+        . '🖥 ' . htmlspecialchars(($d['manufacturer'] ?? '') . ' ' . ($d['model'] ?? ''))
+        . ' · CPU ' . htmlspecialchars($d['cpu'] ?? '?')
+        . ' · RAM ' . round((float) ($d['ram_gb'] ?? 0), 1) . ' GB'
+        . ' · 🛡 ' . htmlspecialchars($avStr)
+        . ' · 👤 ' . htmlspecialchars($d['user'] ?? '?')
+        . '</div>';
+    echo '<table style="font-size:12.5px"><tr><th>Программа</th><th>Версия</th></tr>';
+    $n = 0;
+    foreach (($d['installed'] ?? []) as $pr) {
+        $search = mb_strtolower($pr['name'] . ' ' . $pr['version']);
+        echo '<tr class="iprog" data-p="' . htmlspecialchars($search) . '" data-card="' . $p . '"><td>'
+            . htmlspecialchars($pr['name']) . '</td><td>' . htmlspecialchars($pr['version']) . '</td></tr>';
+        $n++;
+    }
+    echo '</table></div>';
+}
+?>
+  </div>
+</div>
 
 <div class="panel box">
 <details>
