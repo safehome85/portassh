@@ -25,11 +25,13 @@ func oemDecoder() transform.Transformer {
 	return charmap.CodePage866.NewDecoder()
 }
 
-// startDetached запускает процесс, переживающий завершение родителя.
-func startDetached(cmd *exec.Cmd) {
+// startDetached запускает процесс, переживающий завершение родителя
+// (и не держащий консоль/канал SSH-сессии).
+func startDetached(cmd *exec.Cmd) error {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
+	cmd.SysProcAttr.CreationFlags |= 0x00000008 | 0x00000200 // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 	cmd.SysProcAttr.HideWindow = true
-	_ = cmd.Start()
+	return cmd.Start()
 }

@@ -45,7 +45,7 @@ func dialTarget(t *testing.T, addr string, auth []gossh.AuthMethod) (*gossh.Clie
 func TestEndToEndShell(t *testing.T) {
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
-		shell:               defaultShell(),
+		shell:                defaultShell(),
 		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -93,7 +93,7 @@ func TestEndToEndShell(t *testing.T) {
 func TestAuthRejected(t *testing.T) {
 	_, pubLine := clientKey(t)
 	srv := newServer(config{
-		shell:               defaultShell(),
+		shell:                defaultShell(),
 		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -226,7 +226,7 @@ func TestForward(t *testing.T) {
 func TestSftpUploadDownload(t *testing.T) {
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
-		shell:               defaultShell(),
+		shell:                defaultShell(),
 		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -326,7 +326,7 @@ func TestGoSafeRecovers(t *testing.T) {
 func TestExecRawCommandQuoting(t *testing.T) {
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
-		shell:               defaultShell(),
+		shell:                defaultShell(),
 		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -364,7 +364,7 @@ func TestExecSpawnFailureExit127(t *testing.T) {
 
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
-		shell:               "no_such_shell_12345",
+		shell:                "no_such_shell_12345",
 		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -388,5 +388,27 @@ func TestExecSpawnFailureExit127(t *testing.T) {
 	var ee *gossh.ExitError
 	if !errors.As(err, &ee) || ee.ExitStatus() != 127 {
 		t.Fatalf("expected exit 127, got: %v", err)
+	}
+}
+
+func TestSplitExecOpts(t *testing.T) {
+	d, det, cmd := splitExecOpts("timeout=5 notepad &")
+	if d != 5*time.Second || !det || cmd != "notepad" {
+		t.Fatalf("timeout+& parse: %v %v %q", d, det, cmd)
+	}
+	d, det, cmd = splitExecOpts("dir /b &")
+	if d != 0 || !det || cmd != "dir /b" {
+		t.Fatalf("detached parse: %v %v %q", d, det, cmd)
+	}
+	d, det, cmd = splitExecOpts("  timeout=90 dir  ")
+	if d != 90*time.Second || det || cmd != "dir" {
+		t.Fatalf("timeout parse: %v %v %q", d, det, cmd)
+	}
+	d, det, cmd = splitExecOpts("plain command")
+	if d != 0 || det || cmd != "plain command" {
+		t.Fatalf("plain parse: %v %v %q", d, det, cmd)
+	}
+	if _, _, cmd := splitExecOpts("timeout=abc dir"); cmd != "timeout=abc dir" {
+		t.Fatalf("bad timeout must stay as-is: %q", cmd)
 	}
 }

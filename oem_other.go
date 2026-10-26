@@ -4,6 +4,7 @@ package main
 
 import (
 	"os/exec"
+	"syscall"
 
 	"golang.org/x/text/transform"
 )
@@ -17,6 +18,10 @@ func oemDecoder() transform.Transformer {
 func setCmdLine(cmd *exec.Cmd, line string) {}
 
 // startDetached: child processes survive parent exit on unix.
-func startDetached(cmd *exec.Cmd) {
-	_ = cmd.Start()
+func startDetached(cmd *exec.Cmd) error {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+	return cmd.Start()
 }

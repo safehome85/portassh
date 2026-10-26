@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -319,7 +321,34 @@ func sessionHandler(cfg config) ssh.Handler {
 // blocks clear after 10-30 s). Overridden in tests.
 var spawnRetryDelay = 3 * time.Second
 
+// splitExecOpts разбирает опциональные режимы запуска:
+//
+//	timeout=N <cmd> — убить команду через N секунд (exit 124)
+//	<cmd> &         — запустить в фоне и вернуться сразу (GUI/UAC-зависания)
+func splitExecOpts(raw string) (timeout time.Duration, detached bool, cmd string) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasSuffix(raw, " &") {
+		raw = strings.TrimSpace(strings.TrimSuffix(raw, "&"))
+		detached = true
+	}
+	if secs, rest, ok := strings.Cut(raw, " "); ok && strings.HasPrefix(secs, "timeout=") {
+		if n, err := strconv.Atoi(strings.TrimPrefix(secs, "timeout=")); err == nil && n > 0 {
+			// фон побеждает: detached-процесс не отслеживается, таймаут не применим
+			return time.Duration(n) * time.Second, detached, strings.TrimSpace(rest)
+		}
+	}
+	return 0, detached, raw
+}
+
 func runExec(s ssh.Session, cfg config, raw string) {
+	timeout, detached, raw := splitExecOpts(raw)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+	}
+
 	// makeCmd: an exec.Cmd can only be Run once — rebuild for every attempt.
 	makeCmd := func() *exec.Cmd {
 		var cmd *exec.Cmd
@@ -328,10 +357,10 @@ func runExec(s ssh.Session, cfg config, raw string) {
 				// Raw command line via SysProcAttr.CmdLine: Go does not apply
 				// MSVCRT escaping to it (ISSUES.md regression), so the client's
 				// quoting reaches cmd 1:1. /d disables registry AutoRun.
-				cmd = exec.Command(cfg.shell)
+				cmd = exec.CommandContext(ctx, cfg.shell)
 				setCmdLine(cmd, `cmd /d /s /c "`+raw+`"`)
 			} else {
-				cmd = exec.Command(cfg.shell, "/c", raw)
+				cmd = exec.CommandContext(ctx, cfg.shell, "/c", raw)
 			}
 			// cmd/powershell write their output in the OEM encoding (CP866 on
 			// Russian Windows) — decode to UTF-8 on the fly instead of spawning chcp
@@ -342,10 +371,24 @@ func runExec(s ssh.Session, cfg config, raw string) {
 				return cmd
 			}
 		} else {
-			cmd = exec.Command(cfg.shell, "-c", raw)
+			cmd = exec.CommandContext(ctx, cfg.shell, "-c", raw)
 		}
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = s, s, s
 		return cmd
+	}
+
+	// фоновый запуск: не привязываем ввод-вывод к сессии — она закроется сразу
+	if detached {
+		cmd := makeCmd()
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
+		if err := startDetached(cmd); err != nil {
+			fmt.Fprintf(s, "portassh: failed to start %q: %v\n", raw, err)
+			s.Exit(127)
+			return
+		}
+		fmt.Fprintf(s, "portassh: started in background (pid %d)\n", cmd.Process.Pid)
+		s.Exit(0)
+		return
 	}
 
 	var lastErr error
@@ -353,6 +396,11 @@ func runExec(s ssh.Session, cfg config, raw string) {
 		err := makeCmd().Run()
 		if err == nil {
 			s.Exit(0)
+			return
+		}
+		if timeout > 0 && ctx.Err() != nil {
+			fmt.Fprintf(s, "portassh: timeout after %s: %q\n", timeout, raw)
+			s.Exit(124)
 			return
 		}
 		var ee *exec.ExitError
@@ -530,7 +578,7 @@ func exeDir() string {
 }
 
 func connectCommand(relay string, port int) string {
-	return fmt.Sprintf("ssh -o StrictHostKeyChecking=accept-new -J support@%s -p %d anyuser@localhost", relay, port)
+	return fmt.Sprintf("ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@%s -p %d anyuser@localhost", relay, port)
 }
 
 func writeConnectionFile(cfg config) {
