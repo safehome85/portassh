@@ -681,5 +681,129 @@ portassh подтверждает туннель каждую минуту; ма
 </details>
 </div>
 </div>
+<div id="procmodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50" onclick="if(event.target===this)closeProcs()">
+  <div style="background:#fff;max-width:680px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">
+      <b>Диспетчер задач — <span id="pmhost"></span></b>
+      <a href="#" onclick="closeProcs();return false" style="text-decoration:none">✕</a>
+    </div>
+    <input type="search" id="pmq" placeholder="поиск процесса…" oninput="pmRender()" style="padding:8px 12px;border:1px solid #e5eaf1;border-radius:8px;font-size:13.5px;margin-bottom:8px">
+    <div id="pmbody" style="overflow-y:auto;flex:1"></div>
+    <div style="color:#64748b;font-size:12px;margin-top:8px">✖ — завершить процесс. Память — рабочий набор. Системные процессы (PID ≤ 4) защищены.</div>
+  </div>
+</div>
+
+<div id="svcmodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50" onclick="if(event.target===this)closeSvc()">
+  <div style="background:#fff;max-width:680px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">
+      <b>Службы — <span id="svchost"></span></b>
+      <a href="#" onclick="closeSvc();return false" style="text-decoration:none">✕</a>
+    </div>
+    <input type="search" id="svq" placeholder="поиск службы…" oninput="svRender()" style="padding:8px 12px;border:1px solid #e5eaf1;border-radius:8px;font-size:13.5px;margin-bottom:8px">
+    <div id="svbody" style="overflow-y:auto;flex:1"></div>
+    <div style="color:#64748b;font-size:12px;margin-top:8px">▶ запуск · ■ остановка · ⟳ перезапуск</div>
+  </div>
+</div>
+
+<script>
+let pmPort = 0, pmData = [], pmHost = '';
+let svcPort = 0, svcData = [], svcHost = '';
+
+function openProcs(port, host) {
+  pmPort = port; pmHost = host;
+  document.getElementById('pmhost').textContent = host;
+  document.getElementById('pmbody').innerHTML = '<div style="color:#64748b">загрузка…</div>';
+  document.getElementById('procmodal').style.display = 'block';
+  pmLoad();
+}
+function closeProcs() { document.getElementById('procmodal').style.display = 'none'; }
+function pmLoad() {
+  fetch('?procs=' + pmPort).then(r => r.json()).then(j => {
+    const out = (j[String(pmPort)] || {}).out || '';
+    pmData = out.split('\n').filter(l => l.trim()).map(l => {
+      const sp = l.indexOf(' ');
+      const sp2 = l.indexOf(' ', sp + 1);
+      return { pid: l.slice(0, sp), name: l.slice(sp + 1, sp2), ws: sp2 < 0 ? '-' : l.slice(sp2 + 1) };
+    });
+    pmRender();
+  }).catch(() => { document.getElementById('pmbody').textContent = 'ошибка загрузки'; });
+}
+function pmRender() {
+  const q = (document.getElementById('pmq').value || '').toLowerCase();
+  const body = document.getElementById('pmbody');
+  body.innerHTML = '';
+  pmData.filter(p => p.name.toLowerCase().includes(q) || p.pid.includes(q)).forEach(p => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid #eef1f6';
+    const nm = document.createElement('span');
+    nm.style.cssText = 'flex:1;font-family:ui-monospace,monospace;font-size:13px';
+    nm.textContent = p.pid + '  ' + p.name;
+    const mem = document.createElement('span');
+    mem.style.cssText = 'color:#64748b;font-size:12px;min-width:80px;text-align:right';
+    mem.textContent = p.ws >= 0 ? (p.ws / 1048576).toFixed(1) + ' МБ' : '—';
+    const btn = document.createElement('button');
+    btn.textContent = '✖';
+    btn.title = 'Завершить процесс ' + p.pid;
+    btn.style.cssText = 'border:1px solid #fecaca;background:#fef2f2;color:#dc2626;border-radius:6px;padding:2px 10px;cursor:pointer;font-weight:700';
+    btn.onclick = () => { if (confirm('Завершить процесс ' + p.name + ' (PID ' + p.pid + ')?')) pmKill(p.pid); };
+    row.append(nm, mem, btn);
+    body.append(row);
+  });
+  if (!body.children.length) body.innerHTML = '<div style="color:#64748b;padding:10px">ничего не найдено</div>';
+}
+function pmKill(pid) {
+  fetch('?killp=' + pmPort + '&pid=' + pid).then(() => pmLoad());
+}
+
+function openSvc(port, host) {
+  svcPort = port; svcHost = host;
+  document.getElementById('svchost').textContent = host;
+  document.getElementById('svbody').innerHTML = '<div style="color:#64748b">загрузка…</div>';
+  document.getElementById('svcmodal').style.display = 'block';
+  svLoad();
+}
+function closeSvc() { document.getElementById('svcmodal').style.display = 'none'; }
+function svLoad() {
+  fetch('?svcs=' + svcPort).then(r => r.json()).then(j => {
+    const out = (j[String(svcPort)] || {}).out || '';
+    svcData = out.split('\n').filter(l => l.trim()).map(l => {
+      const sp1 = l.indexOf(' '), sp2 = l.indexOf(' ', sp1 + 1);
+      return { name: l.slice(0, sp1), state: l.slice(sp1 + 1, sp2), disp: l.slice(sp2 + 1) };
+    });
+    svRender();
+  }).catch(() => { document.getElementById('svbody').textContent = 'ошибка загрузки'; });
+}
+function svRender() {
+  const q = (document.getElementById('svq').value || '').toLowerCase();
+  const body = document.getElementById('svbody');
+  body.innerHTML = '';
+  svcData.filter(s => (s.name + ' ' + s.disp).toLowerCase().includes(q)).forEach(s => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #eef1f6';
+    const running = s.state === 'RUNNING';
+    const st = document.createElement('span');
+    st.style.cssText = 'font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;' + (running ? 'background:#ecfdf5;color:#059669' : 'background:#f1f5f9;color:#64748b');
+    st.textContent = running ? '● работает' : 'остановлена';
+    const nm = document.createElement('span');
+    nm.style.cssText = 'flex:1;font-size:13px';
+    nm.textContent = s.disp || s.name;
+    row.append(st, nm);
+    for (const act of ['start', 'stop', 'restart']) {
+      const b = document.createElement('button');
+      b.textContent = { start: '▶', stop: '■', restart: '⟳' }[act];
+      b.title = act;
+      b.style.cssText = 'border:1px solid #e5eaf1;background:#f8fafc;border-radius:6px;padding:2px 9px;cursor:pointer;font-size:12px';
+      b.onclick = () => { if (confirm(act + ' — ' + (s.disp || s.name) + '?')) svcAct(act, s.name); };
+      row.append(b);
+    }
+    body.append(row);
+  });
+  if (!body.children.length) body.innerHTML = '<div style="color:#64748b;padding:10px">ничего не найдено</div>';
+}
+function svcAct(act, name) {
+  fetch('?svc=' + svcPort + '&act=' + act + '&name=' + encodeURIComponent(name))
+    .then(r => r.json()).then(() => svLoad());
+}
+</script>
 </body>
 </html>
