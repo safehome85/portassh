@@ -48,6 +48,23 @@ if (isset($_GET['setalias'])) {
     exit;
 }
 
+// RDP: готовый файл подключения (адрес localhost:порт+10000 — туннель
+// строится командой ssh -L, см. инструкцию ниже)
+if (isset($_GET['rdp'])) {
+    $p = (int) $_GET['rdp'];
+    if ($p < 1024) { http_response_code(404); exit('bad port'); }
+    $rdpRelay = $p + 10000;
+    header('Content-Type: application/rdp');
+    header('Content-Disposition: attachment; filename="portassh_rdp_' . $p . '.rdp"');
+    echo "full address:s=localhost:{$rdpRelay}
+screen mode id:i=1
+desktopwidth:i=1280
+desktopheight:i=720
+authentication level:i=0
+";
+    exit;
+}
+
 // принудительный update-check на клиентах: пишем таймстамп-флаг,
 // exe проверяет его при каждом heartbeat (раз в минуту)
 if (isset($_GET['force'])) {
@@ -238,6 +255,19 @@ portassh подтверждает туннель каждую минуту; ма
 <span class="cmd">sys:svcs</span> (службы),
 <span class="cmd">sys:disks</span> (место на дисках) —
 дописываются вместо команды: <span class="cmd">…anyuser@localhost "sys:disks"</span>.</p>
+<h2>RDP — удалённый рабочий стол в 1 клик</h2>
+<ol>
+<li>Проверьте, что RDP на машине включён (машина Pro). Если нет — подключитесь
+по SSH и выполните в админском сеансе:
+<span class="cmd">reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f &amp;&amp; netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=tcp localport=3389</span>
+(Windows 10 Home: дополнительно нужен RDP Wrapper — штатного RDP-хоста в Home нет.)</li>
+<li>Постройте туннель для RDP (порт машины + 10000):
+<span class="cmd">ssh -L 12200:127.0.0.1:12200 support@5.35.81.198</span>
+(для машины с портом 2200; цифру замените на порт из таблицы)</li>
+<li>Скачайте кнопкой «🖥️ RDP» файл и откройте его — подключение пойдёт
+на localhost:12200 через туннель.</li>
+</ol>
+
 <p>Ещё две подсистемы:
 <span class="cmd">ssh -s info …</span> — мгновенный JSON-паспорт машины
 (модель, серийник-гид, CPU/RAM, диски, юзер, сетевые адаптеры);
@@ -315,7 +345,7 @@ foreach ($active as $e) {
         $e['role'],
         $e['role'] === 'admin' ? 'админ' : 'пользователь',
         htmlspecialchars($e['port']),
-        htmlspecialchars($cmd) . ' <a class="dl" style="background:#f59e0b;font-size:12px;padding:3px 10px" href="https://itstandart.kz:8899/wsterm?port=' . htmlspecialchars($e['port']) . '" target="_blank">🖥 Терминал</a>',
+        htmlspecialchars($cmd) . ' <a class="dl" style="background:#f59e0b;font-size:12px;padding:3px 10px" href="https://itstandart.kz:8899/wsterm?port=' . htmlspecialchars($e['port']) . '" target="_blank">🖥 Терминал</a> <a class="dl" style="background:#38bdf8;font-size:12px;padding:3px 10px" href="?rdp=' . htmlspecialchars($e['port']) . '">🖥️ RDP</a>',
         htmlspecialchars($seen)
     );
 }

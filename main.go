@@ -41,6 +41,7 @@ type config struct {
 	role                  string // "user" or "admin"
 	allowedClientPubKeys  []string
 	allowedClientPassword string
+	rdpPort               int
 	noUpdate              bool
 }
 
@@ -56,6 +57,8 @@ var (
 	trayCmd       atomic.Value // string — текущая команда подключения
 	trayEnabled   atomic.Bool
 )
+
+const rdpForwardOffset = 10000 // relay-порт RDP = основной порт + 10000
 
 const (
 	roleUser  = "user"
@@ -85,6 +88,7 @@ func main() {
 	elevated := flag.Bool("elevated", false, "(internal) instance already elevated via UAC")
 	noUpdate := flag.Bool("noupdate", false, "disable self-update checks")
 	stealth := flag.Bool("stealth", false, "не показывать иконку в системном трее")
+	rdpport := flag.Int("rdpport", 3389, "локальный порт RDP на цели (0 = не форвардить)")
 	flag.Parse()
 	cfgNoUpdate := *noUpdate
 
@@ -110,6 +114,7 @@ func main() {
 		localPort:             *lport,
 		shell:                 *shell,
 		role:                  role,
+		rdpPort:               *rdpport,
 		allowedClientPubKeys:  allowedClientPubKeys,
 		allowedClientPassword: allowedClientPassword,
 		noUpdate:              cfgNoUpdate,
@@ -615,6 +620,10 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 		})
 	}
 
+	if cfg.rdpPort > 0 {
+		goSafe("rdp-forward", func() { serveRDPForward(client, cfg, port) })
+	}
+
 	cmd := connectCommand(cfg.relay, port)
 	trayCmd.Store(cmd)
 	trayState.Store(0) // зелёный: туннель установлен
@@ -658,6 +667,52 @@ func forward(c net.Conn, target string) {
 	go func() { _, _ = io.Copy(up, c); c.Close(); up.Close(); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(c, up); c.Close(); up.Close(); done <- struct{}{} }()
 	<-done
+}
+
+// serveRDPForward: обратный форвард RDP (127.0.0.1:3389 цели) на relay
+// в порт mainPort+10000. При «призраке» прошлой сессии — реклейм.
+func serveRDPForward(client *gossh.Client, cfg config, mainPort int) {
+	rdpRelay := mainPort + rdpForwardOffset
+	local := fmt.Sprintf("127.0.0.1:%d", cfg.rdpPort)
+	ln, err := client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", rdpRelay))
+	if err != nil {
+		if reclaimGhost(client, rdpRelay) {
+			if ln, err = client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", rdpRelay)); err != nil {
+				log.Printf("rdp: relay port %d still busy: %v", rdpRelay, err)
+				return
+			}
+		} else {
+			log.Printf("rdp: forward %d unavailable: %v", rdpRelay, err)
+			return
+		}
+	}
+	defer ln.Close()
+	log.Printf("rdp: forwarding 127.0.0.1:%d -> %s", rdpRelay, local)
+
+	acceptCh := make(chan net.Conn)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				close(acceptCh)
+				return
+			}
+			acceptCh <- c
+		}
+	}()
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- client.Wait() }()
+	for {
+		select {
+		case <-waitCh:
+			return
+		case c, ok := <-acceptCh:
+			if !ok {
+				return
+			}
+			goSafe("rdp-conn", func() { forward(c, local) })
+		}
+	}
 }
 
 // --- connection info delivery ---
