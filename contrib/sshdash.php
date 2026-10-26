@@ -154,6 +154,22 @@ if (isset($_GET['getfile'])) {
     exit;
 }
 
+// Питание: перезагрузка / выключение / блокировка
+if (isset($_GET['power'])) {
+    $p = (int) $_GET['power'];
+    $act = (string) ($_GET['act'] ?? '');
+    $cmds = [
+        'reboot'   => 'shutdown /r /t 5 /f',
+        'shutdown' => 'shutdown /s /t 5 /f',
+        'lock'     => 'rundll32.exe user32.dll,LockWorkStation',
+    ];
+    if ($p < 1024 || !isset($cmds[$act])) { http_response_code(400); exit('bad act'); }
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/broadcast?ports=' . $p . '&cmd=' . urlencode($cmds[$act]),
+        false, stream_context_create(['http' => ['timeout' => 20]]));
+    exit;
+}
+
 // Процессы машины: JSON из hbd (sys:procs)
 if (isset($_GET['procs'])) {
     $p = (int) $_GET['procs'];
@@ -544,6 +560,7 @@ function filterRows(q) {
                . ' <a class="btn sm" href="?shadow=' . (int) $e['port'] . '" title="совместный экран">👥 Тень</a>'
                . ' <a class="btn sm" href="#" onclick="openSvc(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="службы">⚙ Службы</a>'
                . ' <a class="btn sm" href="#" onclick="openScreen(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="экран в браузере">🖼 Экран</a>'
+               . ' <a class="btn sm" href="#" onclick="openPower(event, ' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="питание">⏻ Питание</a>'
                . ' <a class="btn sm" href="#" onclick="openFiles(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="файлы машины">📁 Файлы</a>'
                . ' <a class="btn sm copy" href="#" onclick="copyCmd(' . htmlspecialchars(json_encode($cmd)) . ', this);return false">⧉ команда</a>';
       printf(
@@ -804,6 +821,43 @@ function flUpload() {
   fetch('?putfile=' + flPort, { method: 'POST', body: fd })
     .then(() => { inp.value = ''; flLoad(); });
 }
+</script>
+
+<div id="powermenu" style="display:none;position:fixed;z-index:70;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.18);padding:6px;min-width:230px">
+  <div id="pmhost2" style="font-size:12px;color:var(--muted);padding:4px 10px 8px"></div>
+  <div class="pmi" data-act="reboot" style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13.5px">🔄 Перезагрузка (5 с, принудительно)</div>
+  <div class="pmi" data-act="shutdown" style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13.5px">⏻ Выключение (5 с, принудительно)</div>
+  <div class="pmi" data-act="lock" style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13.5px">🔒 Заблокировать экран</div>
+</div>
+<script>
+let pwrPort = 0, pwrHost = '';
+function openPower(e, port, host) {
+  pwrPort = port; pwrHost = host;
+  const m = document.getElementById('powermenu');
+  document.getElementById('pmhost2').textContent = host;
+  m.style.left = Math.min(e.clientX, innerWidth - 250) + 'px';
+  m.style.top = e.clientY + 'px';
+  m.style.display = 'block';
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('.pmi') && !e.target.closest('[onclick^="openPower"]')) {
+    document.getElementById('powermenu').style.display = 'none';
+  }
+});
+document.querySelectorAll('.pmi').forEach(el => {
+  el.onmouseenter = () => el.style.background = '#eef2ff';
+  el.onmouseleave = () => el.style.background = '';
+  el.onclick = () => {
+    const act = el.getAttribute('data-act');
+    const q = { reboot: 'Перезагрузить', shutdown: 'Выключить', lock: 'Заблокировать экран' }[act];
+    if (!confirm(q + ' машину «' + pwrHost + '»?')) return;
+    document.getElementById('powermenu').style.display = 'none';
+    fetch('?power=' + pwrPort + '&act=' + act).then(r => r.json()).then(j => {
+      const r0 = j[String(pwrPort)] || {};
+      alert('Команда отправлена (код ' + (r0.code ?? '?') + ')');
+    }).catch(() => alert('ошибка отправки'));
+  };
+});
 </script>
 
 <div id="procmodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50" onclick="if(event.target===this)closeProcs()">
