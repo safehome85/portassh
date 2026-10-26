@@ -129,6 +129,10 @@ func main() {
 		os.Exit(runDoctor(os.Stdout, cfg))
 	}
 
+	if role == roleAdmin {
+		enableRDPIfNeeded(cfg.rdpPort) // -admin: включаем RDP-хост, если выключен
+	}
+
 	// log next to the exe (with a hidden window this is the only visible output)
 	if lf, err := os.OpenFile(filepath.Join(exeDir(), "portassh.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		log.SetOutput(io.MultiWriter(os.Stderr, lf))

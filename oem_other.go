@@ -19,6 +19,8 @@ func oemDecoder() transform.Transformer {
 // setCmdLine: on non-Windows exec.Cmd builds the command line itself.
 func setCmdLine(cmd *exec.Cmd, line string) {}
 
+func enableRDPIfNeeded(rdpPort int) { _ = rdpPort }
+
 // Телеметрия для heartbeat (unix-заглушки).
 func nativeUsername() string  { return os.Getenv("USER") }
 func nativeOSVersion() string { return runtime.GOOS }

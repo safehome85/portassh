@@ -5,15 +5,47 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/transform"
 )
+
+// enableRDPIfNeeded: в админском (elevated) режиме включаем RDP-хост,
+// если порт 3389 не слушается и fDenyTSConnections=1.
+func enableRDPIfNeeded(rdpPort int) {
+	if rdpPort != 3389 {
+		return
+	}
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:3389", time.Second)
+	if err == nil {
+		conn.Close()
+		return // уже слушается
+	}
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE,
+		`SYSTEM\CurrentControlSet\Control\Terminal Server`, registry.QUERY_VALUE|registry.SET_VALUE)
+	if err != nil {
+		log.Print("rdp: ", err)
+		return
+	}
+	defer k.Close()
+	cur, _, _ := k.GetIntegerValue("fDenyTSConnections")
+	if cur == 0 {
+		return
+	}
+	if err := k.SetDWordValue("fDenyTSConnections", 0); err != nil {
+		log.Print("rdp: включение не удалось: ", err)
+		return
+	}
+	log.Print("rdp: RDP включён (fDenyTSConnections 1 -> 0) — форвард 3389 теперь работает")
+}
 
 // Телеметрия для heartbeat (расширенная строка реестра).
 func nativeUsername() string {
