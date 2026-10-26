@@ -307,7 +307,6 @@ func putFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	_ = sc.Mkdir("Downloads") // игнорируем "уже существует" — на свежих профилях папки может не быть
 	f, err := sc.Create("Downloads/" + name)
 	if err != nil {
 		http.Error(w, err.Error(), 502)

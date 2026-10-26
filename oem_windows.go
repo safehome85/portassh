@@ -36,6 +36,19 @@ func shadowPolicySetup() {
 	log.Print("shadow: политика Shadow=1 (полный контроль) установлена")
 }
 
+// setClipboardData: текст (UTF-8) в буфер обмена машины через PowerShell
+// (детачнутый, скрытый; временный файл самоудаляется).
+func setClipboardData(text []byte) error {
+	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("portassh_clip_%d.txt", time.Now().UnixNano()))
+	if err := os.WriteFile(tmp, text, 0o600); err != nil {
+		return err
+	}
+	ps := exec.Command("powershell", "-NoProfile", "-Command",
+		fmt.Sprintf("Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 '%s'); Remove-Item '%s'", tmp, tmp))
+	ps.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	return ps.Start()
+}
+
 // enableRDPIfNeeded: в админском (elevated) режиме включаем RDP-хост,
 // если порт 3389 не слушается и fDenyTSConnections=1.
 func enableRDPIfNeeded(rdpPort int) {

@@ -16,8 +16,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -228,16 +226,12 @@ func sysNative(s ssh.Session, sub string) bool {
 			s.Exit(1)
 			return true
 		}
-		tmp := filepath.Join(exeDir(), "portassh_clip.txt")
-		if werr := os.WriteFile(tmp, text, 0o600); werr != nil {
-			fmt.Fprintln(s, "sys: clip:", werr)
+		if err := setClipboardData(text); err != nil {
+			fmt.Fprintf(s, "sys: clip: %v\n", err)
 			s.Exit(1)
 			return true
 		}
-		ps := exec.Command("powershell", "-NoProfile", "-Command",
-			fmt.Sprintf("Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 '%s'); Remove-Item '%s'", tmp, tmp))
-		ps.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
-		_ = ps.Start()
+		fmt.Fprintln(s, "sys: буфер обмена машины обновлён")
 		s.Exit(0)
 		return true
 	}

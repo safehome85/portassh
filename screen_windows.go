@@ -259,6 +259,12 @@ func execScreenInput(line string) {
 				screenMouseAt(0, x, y) // движение с зажатой кнопкой
 			}
 		}
+	case "clip":
+		if len(f) >= 2 {
+			if b, berr := base64.StdEncoding.DecodeString(f[1]); berr == nil && len(b) > 0 {
+				_ = setClipboardData(b)
+			}
+		}
 	case "wheel":
 		if len(f) >= 2 {
 			if d, err := strconv.Atoi(f[1]); err == nil {
