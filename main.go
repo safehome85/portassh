@@ -67,6 +67,9 @@ const (
 	// флаг принудительного update-check: дашборд пишет unix-таймстамп,
 	// клиенты сверяют при каждом heartbeat (раз в минуту)
 	forceFlagPath = "/home/user/web/itstandart.kz/private/portassh-force.txt"
+	// hbd: лёгкий приёмщик heartbeat на relay (127.0.0.1:8898), трафик идёт
+	// внутри SSH-соединения через direct-tcpip — без форков sh на VPS
+	relayHBDaemon = "127.0.0.1:8898"
 )
 
 func main() {
@@ -772,6 +775,16 @@ func registerOnRelay(client *gossh.Client, cfg config) {
 	}
 	user, osver, disk, ram := telemetry()
 	line := registryLine(host, cfg.relayPort, cfg.role, time.Now(), user, osver, disk, ram, ownVersion())
+
+	// быстрый путь: direct-tcpip к hbd на relay — ни одного процесса sh
+	if hc, derr := client.Dial("tcp", relayHBDaemon); derr == nil {
+		_, werr := io.WriteString(hc, line+"\n")
+		_ = hc.Close()
+		if werr == nil {
+			return
+		}
+	}
+	// fallback: старый путь через sh (если демон недоступен)
 	sess, err := client.NewSession()
 	if err != nil {
 		return
