@@ -101,6 +101,28 @@ if (isset($_GET['procs'])) {
     exit;
 }
 
+// Службы машины: JSON из hbd (sys:svcs)
+if (isset($_GET['svcs'])) {
+    $p = (int) $_GET['svcs'];
+    if ($p < 1024) { http_response_code(404); exit; }
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/broadcast?ports=' . $p . '&cmd=' . urlencode('sys:svcs'),
+        false, stream_context_create(['http' => ['timeout' => 25]]));
+    exit;
+}
+
+// Управление службой: start/stop/restart
+if (isset($_GET['svc'])) {
+    $p = (int) $_GET['svc'];
+    $act = preg_replace('/[^a-z]/', '', (string) ($_GET['act'] ?? ''));
+    $name = preg_replace('/[^A-Za-z0-9._$-]/', '', (string) ($_GET['name'] ?? ''));
+    if ($p < 1024 || !in_array($act, ['start', 'stop', 'restart'], true) || $name === '') { http_response_code(404); exit; }
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/broadcast?ports=' . $p . '&cmd=' . urlencode('sys:svc-' . $act . ' ' . $name),
+        false, stream_context_create(['http' => ['timeout' => 30]]));
+    exit;
+}
+
 // Снять задачу
 if (isset($_GET['killp'])) {
     $p = (int) $_GET['killp'];

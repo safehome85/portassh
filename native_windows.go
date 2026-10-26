@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	ssh "github.com/gliderlabs/ssh"
@@ -59,6 +60,84 @@ func procWorkingSetKB(pid uint32) int64 {
 		return -1
 	}
 	return int64(mc.WorkingSetSize)
+}
+
+// stateText: текстовое состояние службы.
+func stateText(st uint32) string {
+	switch st {
+	case windows.SERVICE_RUNNING:
+		return "RUNNING"
+	case windows.SERVICE_STOPPED:
+		return "STOPPED"
+	case windows.SERVICE_START_PENDING:
+		return "START_PENDING"
+	case windows.SERVICE_STOP_PENDING:
+		return "STOP_PENDING"
+	case windows.SERVICE_PAUSED:
+		return "PAUSED"
+	}
+	return "UNKNOWN"
+}
+
+// svcControl: stop/start/restart службы через OpenSCManager + ControlService.
+func svcControl(action, name string) (string, error) {
+	mgr, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_ALL_ACCESS)
+	if err != nil {
+		return "", fmt.Errorf("SCM: %w", err)
+	}
+	defer windows.CloseServiceHandle(mgr)
+	np, _ := windows.UTF16PtrFromString(name)
+	svc, err := windows.OpenService(mgr, np, windows.SERVICE_ALL_ACCESS)
+	if err != nil {
+		return "", fmt.Errorf("служба %q не найдена: %w", name, err)
+	}
+	defer windows.CloseServiceHandle(svc)
+	var st windows.SERVICE_STATUS
+	waitState := func(target uint32, timeout time.Duration) error {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if err := windows.QueryServiceStatus(svc, &st); err != nil {
+				return err
+			}
+			if st.CurrentState == target {
+				return nil
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+		return fmt.Errorf("таймаут ожидания состояния %s", stateText(target))
+	}
+	switch action {
+	case "stop":
+		if err := windows.ControlService(svc, windows.SERVICE_CONTROL_STOP, &st); err != nil {
+			return "", err
+		}
+		err = waitState(windows.SERVICE_STOPPED, 15*time.Second)
+	case "start":
+		if err := windows.StartService(svc, 0, nil); err != nil {
+			return "", err
+		}
+		err = waitState(windows.SERVICE_RUNNING, 15*time.Second)
+	case "restart":
+		if err := windows.ControlService(svc, windows.SERVICE_CONTROL_STOP, &st); err != nil {
+			return "", err
+		}
+		if err = waitState(windows.SERVICE_STOPPED, 20*time.Second); err != nil {
+			return "", err
+		}
+		if err = windows.StartService(svc, 0, nil); err != nil {
+			return "", err
+		}
+		err = waitState(windows.SERVICE_RUNNING, 20*time.Second)
+	default:
+		return "", fmt.Errorf("неизвестное действие: %s", action)
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := windows.QueryServiceStatus(svc, &st); err != nil {
+		return "", err
+	}
+	return stateText(st.CurrentState), nil
 }
 
 // killProcess: TerminateProcess с защитой от самоубийства и системных PID.
@@ -193,6 +272,25 @@ func sysNative(s ssh.Session, sub string) bool {
 		s.Exit(0)
 		return true
 	default:
+		// sys:svc-<start|stop|restart> <name> — управление службами
+		if action, ok := strings.CutPrefix(sub, "svc-"); ok {
+			act, name, _ := strings.Cut(action, " ")
+			name = strings.TrimSpace(name)
+			if act == "" || name == "" || (act != "start" && act != "stop" && act != "restart") {
+				fmt.Fprintln(s, "sys: использование: sys:svc-<start|stop|restart> <имя_службы>")
+				s.Exit(2)
+				return true
+			}
+			msg, err := svcControl(act, name)
+			if err != nil {
+				fmt.Fprintf(s, "sys: %s %s: %v\n", act, name, err)
+				s.Exit(1)
+				return true
+			}
+			fmt.Fprintf(s, "sys: служба %s — %s\n", name, msg)
+			s.Exit(0)
+			return true
+		}
 		// sys:kill <pid> — «снять задачу» из веб-панели
 		if pidStr, ok := strings.CutPrefix(sub, "kill "); ok {
 			pid, err := strconv.Atoi(strings.TrimSpace(pidStr))
