@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,10 +26,23 @@ const (
 // Модели по умолчанию
 var defaultFreeModelsOpenRouter = []string{
 	"openrouter/auto",
+	"openrouter/free",
 	"nvidia/nemotron-3.5-lightning:free",
 	"recursive/flint-v1.0:free",
 	"cohere/north-mini-code:free",
 	"google/gemma-4-31b-it:free",
+	"google/gemma-4-26b-a4b-it:free",
+	"nvidia/nemotron-3-super-120b-a12b:free",
+	"nvidia/nemotron-3-ultra-550b-a55b:free",
+	"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+	"nvidia/nemotron-3.5-super-vl:free",
+	"liquid/lfm-2.5-2.6b:free",
+	"thinkingmachines/inkling:free",
+	"thinkingmachines/inkling-small:free",
+	"xingchen-agi/xing4.0-29b-a4b:free",
+	"dots-studio/dots-3-note-preview:free",
+	"poolside/laguna-s-2.1:free",
+	"poolside/laguna-xs-2.1:free",
 }
 
 var defaultGoogleAIModels = []string{
@@ -36,6 +50,74 @@ var defaultGoogleAIModels = []string{
 	"gemini-2.5-pro",
 	"gemini-flash-latest",
 	"gemini-flash-lite-latest",
+}
+
+var (
+	cachedFreeModelsOpenRouter []string
+	cachedFreeModelsMu         sync.RWMutex
+	cachedFreeModelsTime       time.Time
+)
+
+func getLiveOpenRouterFreeModels() []string {
+	cachedFreeModelsMu.RLock()
+	if len(cachedFreeModelsOpenRouter) > 0 && time.Since(cachedFreeModelsTime) < 30*time.Minute {
+		res := make([]string, len(cachedFreeModelsOpenRouter))
+		copy(res, cachedFreeModelsOpenRouter)
+		cachedFreeModelsMu.RUnlock()
+		return res
+	}
+	cachedFreeModelsMu.RUnlock()
+
+	// Запрашиваем каталог моделей OpenRouter
+	client := &http.Client{Timeout: 8 * time.Second}
+	req, err := http.NewRequest("GET", "https://openrouter.ai/api/v1/models", nil)
+	if err == nil {
+		ork := readAPIKey("", openRouterKeyFile, "OPENROUTER_API_KEY")
+		if ork != "" {
+			req.Header.Set("Authorization", "Bearer "+ork)
+		}
+		if resp, err := client.Do(req); err == nil && resp.StatusCode == 200 {
+			defer resp.Body.Close()
+			var mResp struct {
+				Data []struct {
+					ID      string `json:"id"`
+					Pricing struct {
+						Prompt     any `json:"prompt"`
+						Completion any `json:"completion"`
+					} `json:"pricing"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&mResp); err == nil {
+				var list []string
+				list = append(list, "openrouter/auto")
+				for _, m := range mResp.Data {
+					if m.ID == "openrouter/auto" {
+						continue
+					}
+					isFree := strings.HasSuffix(m.ID, ":free") || strings.Contains(m.ID, ":free")
+					if !isFree {
+						pStr := fmt.Sprintf("%v", m.Pricing.Prompt)
+						cStr := fmt.Sprintf("%v", m.Pricing.Completion)
+						if (pStr == "0" || pStr == "0.0") && (cStr == "0" || cStr == "0.0") && !strings.Contains(m.ID, "lyria") {
+							isFree = true
+						}
+					}
+					if isFree {
+						list = append(list, m.ID)
+					}
+				}
+				if len(list) > 1 {
+					cachedFreeModelsMu.Lock()
+					cachedFreeModelsOpenRouter = list
+					cachedFreeModelsTime = time.Now()
+					cachedFreeModelsMu.Unlock()
+					return list
+				}
+			}
+		}
+	}
+
+	return defaultFreeModelsOpenRouter
 }
 
 type aiConfigResponse struct {
@@ -64,7 +146,7 @@ func aiConfigHandler(w http.ResponseWriter, r *http.Request) {
 	resp := aiConfigResponse{
 		OpenRouterKeySet: ork != "",
 		GoogleAIKeySet:   gak != "",
-		OpenRouterModels: defaultFreeModelsOpenRouter,
+		OpenRouterModels: getLiveOpenRouterFreeModels(),
 		GoogleAIModels:   defaultGoogleAIModels,
 	}
 	w.Header().Set("Content-Type", "application/json")

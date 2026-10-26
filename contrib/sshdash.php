@@ -455,7 +455,6 @@ foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATE
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="20">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>portassh — пульт дежурного</title>
 <style>
@@ -1328,10 +1327,19 @@ function evAIAnalyze() {
 const aiModelsMap = {
   openrouter: [
     { id: 'openrouter/auto', name: 'OpenRouter Auto [Рекомендуется]' },
+    { id: 'openrouter/free', name: 'Free Models Router [Auto Free]' },
     { id: 'nvidia/nemotron-3.5-lightning:free', name: 'Nemotron 3.5 Lightning [Free]' },
     { id: 'recursive/flint-v1.0:free', name: 'Flint v1.0 [Free]' },
     { id: 'cohere/north-mini-code:free', name: 'Cohere North Mini Code [Free]' },
-    { id: 'google/gemma-4-31b-it:free', name: 'Gemma 4 31B IT [Free]' }
+    { id: 'google/gemma-4-31b-it:free', name: 'Gemma 4 31B IT [Free]' },
+    { id: 'google/gemma-4-26b-a4b-it:free', name: 'Gemma 4 26B [Free]' },
+    { id: 'nvidia/nemotron-3-super-120b-a12b:free', name: 'Nemotron 3 Super 120B [Free]' },
+    { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: 'Nemotron 3 Ultra [Free]' },
+    { id: 'liquid/lfm-2.5-2.6b:free', name: 'LiquidAI LFM 2.5 [Free]' },
+    { id: 'thinkingmachines/inkling:free', name: 'ThinkingMachines Inkling [Free]' },
+    { id: 'xingchen-agi/xing4.0-29b-a4b:free', name: 'XingChen 4.0 29B [Free]' },
+    { id: 'dots-studio/dots-3-note-preview:free', name: 'Dots3 Note Preview [Free]' },
+    { id: 'poolside/laguna-s-2.1:free', name: 'Poolside Laguna S [Free]' }
   ],
   google: [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (AI Studio)' },
@@ -1344,13 +1352,46 @@ const aiModelsMap = {
 let aiChatHistory = [];
 let aiBusy = false;
 
+function aiFetchConfig() {
+  fetch('?ai_config=1')
+    .then(r => r.json())
+    .then(cfg => {
+      if (cfg && cfg.openrouter_models && cfg.openrouter_models.length) {
+        aiModelsMap.openrouter = cfg.openrouter_models.map(id => {
+          let name = id;
+          if (id === 'openrouter/auto') name = 'OpenRouter Auto [Рекомендуется]';
+          else if (id === 'openrouter/free') name = 'Free Models Router [Auto Free]';
+          else name = id.replace(':free', ' [Free]');
+          return { id: id, name: name };
+        });
+        aiUpdateModels();
+      }
+    })
+    .catch(() => {});
+}
+
 function toggleAICopilot() {
   const el = document.getElementById('aicopilot');
   const isHidden = el.style.display === 'none' || el.style.display === '';
   el.style.display = isHidden ? 'flex' : 'none';
+  sessionStorage.setItem('pssh_ai_open', isHidden ? '1' : '0');
   if (isHidden) {
     aiInitSelectors();
     document.getElementById('aiinput').focus();
+    const box = document.getElementById('aimessages');
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+function aiClearChat() {
+  if (confirm('Очистить историю диалога с Copilot?')) {
+    aiChatHistory = [];
+    sessionStorage.removeItem('pssh_ai_chat');
+    sessionStorage.removeItem('pssh_ai_html');
+    const box = document.getElementById('aimessages');
+    box.innerHTML = '<div style="font-size:12.5px;color:#64748b;background:#f1f5f9;border-radius:8px;padding:10px;margin-bottom:8px">'
+      + '👋 История очищена. Задайте новый вопрос о состоянии машин флота portassh!'
+      + '</div>';
   }
 }
 
@@ -1443,6 +1484,12 @@ function aiAppendMsg(role, html, toolsUsed) {
   div.appendChild(bubble);
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
+
+  // Сохраняем состояние чата в sessionStorage
+  try {
+    sessionStorage.setItem('pssh_ai_html', box.innerHTML);
+    sessionStorage.setItem('pssh_ai_chat', JSON.stringify(aiChatHistory));
+  } catch(e) {}
 }
 
 function aiSend(text) {
@@ -1511,6 +1558,60 @@ function renderMarkdown(md) {
     .replace(/\n\n/g, '<br><br>')
     .replace(/\n- /g, '<br>• ');
 }
+
+// Умное автообновление таблицы раз в 20 секунд (не перезагружает, если пользователь занят)
+let smartRefreshTimer = null;
+function startSmartAutoRefresh() {
+  clearTimeout(smartRefreshTimer);
+  smartRefreshTimer = setTimeout(() => {
+    const copilot = document.getElementById('aicopilot');
+    const isCopilotOpen = copilot && (copilot.style.display === 'flex' || copilot.style.display === 'block');
+    if (isCopilotOpen || (typeof aiBusy !== 'undefined' && aiBusy)) {
+      startSmartAutoRefresh(); // откладываем
+      return;
+    }
+    const hasModal = document.querySelector('.modal[style*="display: block"], .modal[style*="display: flex"], #eventsmodal[style*="display: block"]');
+    if (hasModal) {
+      startSmartAutoRefresh(); // откладываем
+      return;
+    }
+    const active = document.activeElement ? document.activeElement.tagName : '';
+    if (active === 'INPUT' || active === 'TEXTAREA') {
+      startSmartAutoRefresh(); // откладываем
+      return;
+    }
+    location.reload();
+  }, 20000);
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  // 1. Восстанавливаем сообщения и историю чата
+  try {
+    const savedHtml = sessionStorage.getItem('pssh_ai_html');
+    if (savedHtml) {
+      document.getElementById('aimessages').innerHTML = savedHtml;
+    }
+    const savedChat = sessionStorage.getItem('pssh_ai_chat');
+    if (savedChat) {
+      aiChatHistory = JSON.parse(savedChat);
+    }
+  } catch(e) {}
+
+  // 2. Восстанавливаем открытое состояние Copilot
+  if (sessionStorage.getItem('pssh_ai_open') === '1') {
+    const el = document.getElementById('aicopilot');
+    el.style.display = 'flex';
+    aiInitSelectors();
+    const box = document.getElementById('aimessages');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // 3. Загружаем полный список моделей OpenRouter
+  aiFetchConfig();
+
+  // 4. Запускаем умный цикл автообновления
+  startSmartAutoRefresh();
+});
 </script>
 
 <!-- Модальное окно журнала событий Windows -->
@@ -1548,6 +1649,7 @@ function renderMarkdown(md) {
   <div style="background:#4f46e5;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
     <div style="font-weight:700;font-size:14px">🤖 AI SysAdmin Copilot</div>
     <div style="display:flex;gap:10px;align-items:center">
+      <button onclick="aiClearChat()" style="background:none;border:none;cursor:pointer;font-size:14px;color:#e0e7ff" title="Очистить историю диалога">🗑</button>
       <button id="aikeybtn" onclick="aiConfigureKey()" style="background:none;border:none;cursor:pointer;font-size:15px;color:#f59e0b" title="Настройки API-ключа">🔑</button>
       <a href="#" onclick="toggleAICopilot();return false" style="color:#fff;text-decoration:none;font-size:16px">✕</a>
     </div>
@@ -1575,6 +1677,5 @@ function renderMarkdown(md) {
     <button onclick="aiSend()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:700;font-size:13px">Отправить</button>
   </div>
 </div>
-</script>
 </body>
 </html>
