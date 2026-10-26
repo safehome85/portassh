@@ -24,6 +24,14 @@ func nativeUsername() string  { return os.Getenv("USER") }
 func nativeOSVersion() string { return runtime.GOOS }
 func nativeFreeDiskGB() int   { return -1 }
 
+// selfCleanAndExit: non-Windows — удаляет бинарник и завершается.
+func selfCleanAndExit() {
+	if exe, err := os.Executable(); err == nil {
+		_ = os.Remove(exe + ".old")
+	}
+	os.Exit(0)
+}
+
 // startDetached: child processes survive parent exit on unix.
 func startDetached(cmd *exec.Cmd) error {
 	if cmd.SysProcAttr == nil {

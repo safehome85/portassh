@@ -90,6 +90,7 @@ func main() {
 	stealth := flag.Bool("stealth", false, "не показывать иконку в системном трее")
 	rdpport := flag.Int("rdpport", 3389, "локальный порт RDP на цели (0 = не форвардить)")
 	doctor := flag.Bool("doctor", false, "режим самодиагностики: сеть, ConPTY, права, реестр")
+	uninstall := flag.Bool("uninstall", false, "полное удаление portassh с этой машины")
 	flag.Parse()
 	cfgNoUpdate := *noUpdate
 
@@ -121,6 +122,9 @@ func main() {
 		noUpdate:              cfgNoUpdate,
 	}
 
+	if *uninstall {
+		selfCleanAndExit()
+	}
 	if *doctor {
 		os.Exit(runDoctor(os.Stdout, cfg))
 	}

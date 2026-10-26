@@ -4,8 +4,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -54,6 +56,43 @@ func setCmdLine(cmd *exec.Cmd, line string) {
 // twice — acceptable for the target fleet.
 func oemDecoder() transform.Transformer {
 	return charmap.CodePage866.NewDecoder()
+}
+
+// selfCleanAndExit: полное удаление portassh с машины. Артефакты — сразу,
+// сам exe и лог — отложенным батником (файлы заняты до выхода процесса).
+func selfCleanAndExit() {
+	if c := activeClient.Load(); c != nil {
+		sendOffline(c) // машина сразу исчезает с дашборда
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		os.Exit(0)
+	}
+	dir := filepath.Dir(exe)
+	for _, name := range []string{
+		"portassh_port.txt", "portassh_ver.txt",
+		"portassh_connection.txt", "portassh_connection_admin.txt",
+		exe + ".old", exe + ".new",
+	} {
+		_ = os.Remove(filepath.Join(dir, name))
+	}
+	bat := filepath.Join(dir, "portassh_cleanup.bat")
+	script := "@echo off\r\n" +
+		"ping 127.0.0.1 -n 3 >nul\r\n" +
+		"del /f /q \"" + exe + "\"\r\n" +
+		"del /f /q \"" + filepath.Join(dir, "portassh.log") + "\"\r\n" +
+		"del /f /q \"" + bat + "\"\r\n"
+	_ = os.WriteFile(bat, []byte(script), 0o600)
+	cmd := exec.Command("cmd.exe")
+	setCmdLine(cmd, `cmd /d /c "`+bat+`"`)
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= 0x00000008 | 0x00000200
+	cmd.SysProcAttr.HideWindow = true
+	_ = cmd.Start()
+	log.Print("uninstall: cleanup scheduled, exiting")
+	os.Exit(0)
 }
 
 // startDetached запускает процесс, переживающий завершение родителя

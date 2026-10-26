@@ -131,6 +131,10 @@ func sysNative(s ssh.Session, sub string) bool {
 			}
 			fmt.Fprintf(s, "%s free=%s total=%s\n", string(rune('A'+d)), gb(free), gb(total))
 		}
+	case "uninstall":
+		selfCleanAndExit()
+		s.Exit(0)
+		return true
 	default:
 		return false
 	}
