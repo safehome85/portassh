@@ -478,8 +478,7 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 		})
 	}
 
-	fmt.Printf("\n=== READY ===\nConnect from your computer:\n  ssh -o StrictHostKeyChecking=accept-new -J root@%s -p %d anyuser@localhost\n",
-		cfg.relay, port)
+	fmt.Printf("\n=== READY ===\nConnect from your computer:\n  %s\n", connectCommand(cfg.relay, port))
 
 	acceptCh := make(chan net.Conn)
 	go func() {
@@ -531,7 +530,7 @@ func exeDir() string {
 }
 
 func connectCommand(relay string, port int) string {
-	return fmt.Sprintf("ssh -o StrictHostKeyChecking=accept-new -J root@%s -p %d anyuser@localhost", relay, port)
+	return fmt.Sprintf("ssh -o StrictHostKeyChecking=accept-new -J support@%s -p %d anyuser@localhost", relay, port)
 }
 
 func writeConnectionFile(cfg config) {
