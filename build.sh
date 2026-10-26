@@ -30,4 +30,13 @@ else
   echo "skip: signing (no sign.pfx or osslsigncode)"
 fi
 
+# именованная версия: 1.15, 1.16, ... (счётчик в build.ver)
+VER=$(cat build.ver 2>/dev/null || echo "1.14")
+MAJ=${VER%%.*}; MIN=${VER##*.}
+VER="$MAJ.$((MIN + 1))"
+echo "$VER" > build.ver
+SHA=$(shasum -a 256 portassh.exe | awk '{print $1}')
+echo "$SHA $VER" > version.txt
+echo "build ver. $VER (sha256 ${SHA:0:12}) -> version.txt"
+
 ls -lh portassh.exe

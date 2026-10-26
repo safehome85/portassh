@@ -664,12 +664,24 @@ func ownVersion() string {
 	v := "?"
 	if exe, err := os.Executable(); err == nil {
 		if b, err := os.ReadFile(exe); err == nil {
-			sum := sha256.Sum256(b)
-			v = hex.EncodeToString(sum[:])[:12]
+			sum := hex.EncodeToString(sha256Sum(b))
+			// имя сборки пишет selfUpdate рядом с exe: "полный_sha256 имя"
+			if data, err := os.ReadFile(filepath.Join(filepath.Dir(exe), "portassh_ver.txt")); err == nil {
+				if f := strings.Fields(string(data)); len(f) >= 2 && f[0] == sum {
+					ownVersionCache.Store(f[1])
+					return f[1]
+				}
+			}
+			v = sum[:12]
 		}
 	}
 	ownVersionCache.Store(v)
 	return v
+}
+
+func sha256Sum(b []byte) []byte {
+	sum := sha256.Sum256(b)
+	return sum[:]
 }
 
 // persistedPortPath: файл рядом с exe хранит последний удачный relay-порт,
@@ -846,7 +858,15 @@ func selfUpdate(client *gossh.Client, cfg config) error {
 	if err != nil {
 		return err
 	}
-	remoteSum := strings.TrimSpace(string(ver))
+	verFields := strings.Fields(strings.TrimSpace(string(ver)))
+	remoteSum := ""
+	remoteName := ""
+	if len(verFields) >= 1 {
+		remoteSum = verFields[0]
+	}
+	if len(verFields) >= 2 {
+		remoteName = verFields[1]
+	}
 	if remoteSum == hex.EncodeToString(curSum[:]) {
 		return nil // up to date
 	}
@@ -872,9 +892,13 @@ func selfUpdate(client *gossh.Client, cfg config) error {
 		return err
 	}
 
+	// имя новой сборки — рядом с exe для ownVersion()
+	_ = os.WriteFile(filepath.Join(filepath.Dir(exePath), "portassh_ver.txt"),
+		[]byte(remoteSum+" "+remoteName+"\n"), 0o600)
+
 	cmd := exec.Command(exePath, os.Args[1:]...)
 	startDetached(cmd)
-	log.Printf("update: new build started, restarting")
+	log.Printf("update: new build started, restarting (ver. %s)", remoteName)
 	os.Exit(0)
 	return nil
 }
