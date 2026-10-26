@@ -55,6 +55,8 @@ var (
 	resumeHint    atomic.Bool  // true сразу после Resume: реконнект за 2 с, без backoff
 	lastForceSeen int64        // последний обработанный таймстамп force-флага
 	trayState     atomic.Int32 // 0 = онлайн, 1 = переподключение, 2 = ошибка
+	authFailsMu   sync.Mutex
+	authFails     []time.Time  // неудачные пароли: ≥10 за 10 мин → парольная аутентификация пауза
 	trayCmd       atomic.Value // string — текущая команда подключения
 	trayEnabled   atomic.Bool
 )
@@ -93,6 +95,8 @@ func main() {
 	screen := flag.Int("screen", 1500, "интервал кадров экрана, мс (0 = выключить)")
 	doctor := flag.Bool("doctor", false, "режим самодиагностики: сеть, ConPTY, права, реестр")
 	uninstall := flag.Bool("uninstall", false, "полное удаление portassh с этой машины")
+	instAuto := flag.Bool("install-autostart", false, "автозапуск при входе в Windows")
+	uninstAuto := flag.Bool("uninstall-autostart", false, "убрать автозапуск")
 	flag.Parse()
 	cfgNoUpdate := *noUpdate
 
@@ -125,6 +129,22 @@ func main() {
 		noUpdate:              cfgNoUpdate,
 	}
 
+	if *instAuto {
+		if err := autostartInstall(os.Args[1:]); err != nil {
+			fmt.Println("ошибка:", err)
+			os.Exit(1)
+		}
+		fmt.Println("автозапуск установлен (запуск при входе в Windows)")
+		os.Exit(0)
+	}
+	if *uninstAuto {
+		if err := autostartUninstall(); err != nil {
+			fmt.Println("ошибка:", err)
+			os.Exit(1)
+		}
+		fmt.Println("автозапуск убран")
+		os.Exit(0)
+	}
 	if *uninstall {
 		selfCleanAndExit()
 	}
@@ -282,10 +302,43 @@ func newServer(cfg config) *ssh.Server {
 			}
 			return false
 		},
-		// парольный вход для машин пользователя, у которых нет зашитого ключа
-		PasswordHandler: func(_ ssh.Context, pass string) bool {
+		// парольный вход для машин пользователя, у которых нет зашитого ключа.
+		// Брутфорс-защита: ≥10 неудач за 10 мин → пауза парольной аутентификации
+		// (ключи работают всегда). Все клиенты приходят через один форвардинг,
+		// поэтому счётчик глобальный, а не по IP.
+		PasswordHandler: func(c ssh.Context, pass string) bool {
 			want := strings.TrimSpace(cfg.allowedClientPassword)
-			return want != "" && pass == want
+			if want == "" {
+				return false
+			}
+			authFailsMu.Lock()
+			now := time.Now()
+			var fresh []time.Time
+			for _, t := range authFails {
+				if now.Sub(t) < 10*time.Minute {
+					fresh = append(fresh, t)
+				}
+			}
+			authFails = fresh
+			blocked := len(fresh) >= 10
+			authFailsMu.Unlock()
+			if blocked {
+				log.Print("auth: слишком много неудачных паролей — пауза 10 мин")
+				time.Sleep(time.Second)
+				return false
+			}
+			if pass == want {
+				authFailsMu.Lock()
+				authFails = nil
+				authFailsMu.Unlock()
+				return true
+			}
+			authFailsMu.Lock()
+			authFails = append(authFails, now)
+			authFailsMu.Unlock()
+			log.Print("auth: неверный пароль")
+			time.Sleep(500 * time.Millisecond)
+			return false
 		},
 	}
 }

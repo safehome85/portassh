@@ -114,6 +114,46 @@ if (isset($_GET['input'])) {
     exit;
 }
 
+// Файлы машины: листинг домашней папки
+if (isset($_GET['ls'])) {
+    $p = (int) $_GET['ls'];
+    if ($p < 1024) { http_response_code(404); exit; }
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/ls?port=' . $p,
+        false, stream_context_create(['http' => ['timeout' => 20]]));
+    exit;
+}
+
+// Файлы: загрузка НА машину (multipart, поле f) → Downloads
+if (isset($_GET['putfile'])) {
+    $p = (int) $_GET['putfile'];
+    if ($p < 1024 || !isset($_FILES['f']) || $_FILES['f']['error'] !== UPLOAD_ERR_OK) { http_response_code(400); exit('no file'); }
+    $name = basename($_FILES['f']['name']);
+    $content = file_get_contents($_FILES['f']['tmp_name']);
+    if ($content === false) { http_response_code(500); exit; }
+    $ctx = stream_context_create(['http' => ['method' => 'POST', 'timeout' => 300,
+        'header' => "Content-Type: application/octet-stream\r\nContent-Length: " . strlen($content),
+        'content' => $content]]);
+    $raw = @file_get_contents('http://127.0.0.1:8897/putfile?port=' . $p . '&name=' . urlencode($name), false, $ctx);
+    header('Content-Type: application/json');
+    echo $raw === false ? '{"error":"upload failed"}' : '{"ok":true}';
+    exit;
+}
+
+// Файлы: скачивание С машины
+if (isset($_GET['getfile'])) {
+    $p = (int) $_GET['getfile'];
+    $name = preg_replace('/[^A-Za-z0-9._ ()-]/', '', (string) ($_GET['name'] ?? ''));
+    if ($p < 1024 || $name === '') { http_response_code(404); exit; }
+    $ctx = stream_context_create(['http' => ['timeout' => 300]]);
+    $raw = @file_get_contents('http://127.0.0.1:8897/getfile?port=' . $p . '&name=' . urlencode($name), false, $ctx);
+    if ($raw === false) { http_response_code(404); exit('not found'); }
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . addslashes($name) . '"');
+    echo $raw;
+    exit;
+}
+
 // Процессы машины: JSON из hbd (sys:procs)
 if (isset($_GET['procs'])) {
     $p = (int) $_GET['procs'];
@@ -705,6 +745,67 @@ portassh подтверждает туннель каждую минуту; ма
 </details>
 </div>
 </div>
+<div id="filemodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50" onclick="if(event.target===this)closeFiles()">
+  <div style="background:#fff;max-width:640px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">
+      <b>Файлы — <span id="flhost"></span> <span style="color:#64748b;font-size:12px">(домашняя папка)</span></b>
+      <a href="#" onclick="closeFiles();return false" style="text-decoration:none">✕</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <input type="file" id="flup" style="font-size:12.5px">
+      <button onclick="flUpload()" style="background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:7px 14px;font-weight:600;font-size:12.5px;cursor:pointer">📤 На машину</button>
+    </div>
+    <div id="flbody" style="overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+<script>
+let flPort = 0, flHost = '';
+function openFiles(port, host) {
+  flPort = port; flHost = host;
+  document.getElementById('flhost').textContent = host;
+  document.getElementById('filemodal').style.display = 'block';
+  flLoad();
+}
+function closeFiles() { document.getElementById('filemodal').style.display = 'none'; }
+function flLoad() {
+  document.getElementById('flbody').innerHTML = '<div style="color:#64748b">загрузка…</div>';
+  fetch('?ls=' + flPort).then(r => r.json()).then(list => {
+    const body = document.getElementById('flbody');
+    body.innerHTML = '';
+    (list || []).sort((a, b) => (b.d - a.d) || a.n.localeCompare(b.n)).forEach(f => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #eef1f6';
+      const nm = document.createElement('span');
+      nm.style.cssText = 'flex:1;font-size:13px';
+      nm.textContent = (f.d ? '📁 ' : '📄 ') + f.n;
+      const sz = document.createElement('span');
+      sz.style.cssText = 'color:#64748b;font-size:12px';
+      sz.textContent = f.d ? 'папка' : (f.s / 1048576).toFixed(2) + ' МБ';
+      row.append(nm, sz);
+      if (!f.d) {
+        const dl = document.createElement('a');
+        dl.href = '?getfile=' + flPort + '&name=' + encodeURIComponent(f.n);
+        dl.textContent = '⬇';
+        dl.title = 'скачать';
+        dl.style.cssText = 'text-decoration:none;font-size:15px';
+        row.append(dl);
+      }
+      body.append(row);
+    });
+    if (!body.children.length) body.innerHTML = '<div style="color:#64748b;padding:10px">папка пуста</div>';
+  }).catch(() => { document.getElementById('flbody').textContent = 'ошибка загрузки'; });
+}
+function flUpload() {
+  const inp = document.getElementById('flup');
+  if (!inp.files.length) { alert('выберите файл'); return; }
+  const fd = new FormData();
+  fd.append('f', inp.files[0]);
+  document.getElementById('flbody').innerHTML = '<div style="color:#64748b">отправка…</div>';
+  fetch('?putfile=' + flPort, { method: 'POST', body: fd })
+    .then(() => { inp.value = ''; flLoad(); });
+}
+</script>
+
 <div id="procmodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50" onclick="if(event.target===this)closeProcs()">
   <div style="background:#fff;max-width:680px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">

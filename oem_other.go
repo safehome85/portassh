@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -22,6 +23,9 @@ func setCmdLine(cmd *exec.Cmd, line string) {}
 func enableRDPIfNeeded(rdpPort int) { _ = rdpPort }
 
 func shadowPolicySetup() {}
+
+func autostartInstall(args []string) error { _ = args; return fmt.Errorf("только Windows") }
+func autostartUninstall() error            { return fmt.Errorf("только Windows") }
 
 // Телеметрия для heartbeat (unix-заглушки).
 func nativeUsername() string  { return os.Getenv("USER") }
