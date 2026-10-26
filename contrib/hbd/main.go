@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	listen = "127.0.0.1:8898"
-	file   = "/home/portassh/online.txt"
+	listen    = "127.0.0.1:8898"
+	file      = "/home/portassh/online.txt"
+	compEvery = 5000 // дозаписей между ротациями
+	compKeep  = 2000 // строк остаётся после ротации
 )
 
 func valid(line string) bool {
@@ -58,7 +60,29 @@ func handle(c net.Conn) {
 	w.Flush()
 }
 
+// compact: ротация online.txt — остаются последние compKeep строк.
+// Единственный писатель — hbd, поэтому rename безопасен.
+func compact() {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > compKeep {
+		lines = lines[len(lines)-compKeep:]
+	}
+	tmp := file + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, file); err != nil {
+		return
+	}
+	log.Printf("online.txt rotated: kept %d lines", len(lines))
+}
+
 func main() {
+	compact()
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		log.Fatal(err)
 	}
