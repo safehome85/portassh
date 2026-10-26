@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 const (
@@ -18,6 +19,11 @@ const (
 	file      = "/home/portassh/online.txt"
 	compEvery = 5000 // дозаписей между ротациями
 	compKeep  = 2000 // строк остаётся после ротации
+)
+
+var (
+	hbMu    sync.Mutex
+	hbCount int
 )
 
 func valid(line string) bool {
@@ -47,6 +53,8 @@ func handle(c net.Conn) {
 		return
 	}
 	defer f.Close()
+	hbMu.Lock()
+	defer hbMu.Unlock()
 	w := bufio.NewWriter(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -56,8 +64,13 @@ func handle(c net.Conn) {
 		if _, err := w.WriteString(line + "\n"); err != nil {
 			return
 		}
+		hbCount++
 	}
 	w.Flush()
+	if hbCount >= compEvery {
+		compact()
+		hbCount = 0
+	}
 }
 
 // compact: ротация online.txt — остаются последние compKeep строк.

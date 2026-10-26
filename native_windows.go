@@ -130,5 +130,6 @@ func sysNative(s ssh.Session, sub string) bool {
 	default:
 		return false
 	}
+	s.Exit(0)
 	return true
 }

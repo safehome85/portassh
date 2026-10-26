@@ -119,6 +119,21 @@ func execViaPool(s ssh.Session, raw string) bool {
 	exePool.sink.Store(s)
 	defer exePool.sink.Store(io.Discard)
 
+	// интерактивная команда (pause, set /p) держит маркер вечно и блокирует
+	// мьютекс пула: при обрыве сессии прибиваем шелл, сканер получит EOF
+	done := make(chan struct{})
+	defer close(done)
+	goSafe("pool-abort", func() {
+		select {
+		case <-s.Context().Done():
+			exePool.dead.Store(true)
+			if exePool.cmd != nil && exePool.cmd.Process != nil {
+				_ = exePool.cmd.Process.Kill()
+			}
+		case <-done:
+		}
+	})
+
 	feed := raw + "\r\n" + "echo " + exePool.marker + "%ERRORLEVEL%\r\n"
 	if _, err := io.WriteString(exePool.stdin, feed); err != nil {
 		// труба мертва — тихий перезапуск и вторая попытка
