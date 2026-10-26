@@ -14,6 +14,26 @@ $REGISTRY    = "$PRIVATE/portassh-online.txt";
 $bcmdSaved   = '';
 $broadcastHtml = '';
 $ALIASES_F   = "$PRIVATE/portassh-aliases.json";
+$PBF         = "$PRIVATE/playbooks.json";
+$PB_DEFAULTS = [
+    ['💾 Место на дисках', 'sys:disks'],
+    ['📊 Процессы с памятью', 'sys:procs'],
+    ['🛠 Службы Windows', 'sys:svcs'],
+    ['👤 Пользователь и машина', 'sys:whoami'],
+    ['🧹 Очистить временные файлы', 'del /q /s %temp%\* && echo Очищено'],
+    ['🌐 Сбросить DNS-кэш', 'ipconfig /flushdns'],
+    ['🌐 Сброс сетевого стека (Wi-Fi перенастроить!)', 'netsh winsock reset && ipconfig /flushdns'],
+    ['🖨 Перезапустить очередь печати', 'net stop Spooler && del /q /f %systemroot%\System32\Spool\Printers\* && net start Spooler'],
+    ['🔍 Проверка системных файлов (в фоне, 10-20 мин)', 'start /min cmd /c "sfc /scannow > %temp%\p_sfc.log 2>&1"'],
+    ['🧩 Восстановление хранилища DISM (в фоне, долго)', 'start /min cmd /c "DISM /Online /Cleanup-Image /RestoreHealth > %temp%\p_dism.log 2>&1"'],
+    ['🌐 Проверить интернет (ping 8.8.8.8)', 'ping 8.8.8.8 -n 4'],
+    ['📡 Обновить групповые политики', 'gpupdate /force'],
+    ['🖥 Перезапустить проводник', 'taskkill /f /im explorer.exe & start explorer.exe'],
+    ['📜 Информация о Windows', 'systeminfo | findstr /B /C:"OS" /C:"System Boot"'],
+    ['⏻ Перезагрузка (5 с, принудительно)', 'shutdown /r /t 5 /f'],
+    ['⏻ Выключение (5 с, принудительно)', 'shutdown /s /t 5 /f'],
+    ['🔒 Заблокировать экран', 'rundll32.exe user32.dll,LockWorkStation'],
+];
 $LATEST_RAW  = trim((string) @file_get_contents("$PRIVATE/portassh-version.txt"));
 $LATEST_VER  = preg_split('/\s+/', $LATEST_RAW)[0] ?? '';
 $LATEST_NAME = preg_split('/\s+/', $LATEST_RAW)[1] ?? '';
@@ -45,6 +65,30 @@ if (isset($_GET['setalias'])) {
         }
         file_put_contents($ALIASES_F, json_encode($al, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
     }
+    header('Location: /sshdash');
+    exit;
+}
+
+// Быстрые сценарии: JSON на VPS, сид при первом запуске
+$playbooks = json_decode((string) @file_get_contents($PBF), true);
+if (!is_array($playbooks) || count($playbooks) === 0) {
+    $playbooks = array_map(fn($p) => ['n' => $p[0], 'c' => $p[1]], $PB_DEFAULTS);
+    file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+}
+if (isset($_GET['addpb'])) {
+    $n = mb_substr(trim((string) ($_GET['pbname'] ?? '')), 0, 80);
+    $c = trim((string) ($_GET['pbcmd'] ?? ''));
+    if ($n !== '' && $c !== '') {
+        $playbooks[] = ['n' => $n, 'c' => $c];
+        file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+    }
+    header('Location: /sshdash');
+    exit;
+}
+if (isset($_GET['delpb'])) {
+    $n = trim((string) ($_GET['pbname'] ?? ''));
+    $playbooks = array_values(array_filter($playbooks, fn($p) => ($p['n'] ?? '') !== $n));
+    file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
     header('Location: /sshdash');
     exit;
 }
@@ -446,6 +490,18 @@ foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATE
 <div class="wrap">
 <script>const INV_ALL_PORTS = <?= json_encode(array_map(fn($e) => (int) $e['port'], array_values($active))) ?>;</script>
 <script>
+function addPlaybook() {
+  const n = prompt('Название сценария (в меню):');
+  if (n === null || !n.trim()) return;
+  const c = prompt('Команда (cmd):');
+  if (c === null || !c.trim()) return;
+  location.href = '/sshdash?addpb=1&pbname=' + encodeURIComponent(n.trim()) + '&pbcmd=' + encodeURIComponent(c.trim());
+}
+function delPlaybook() {
+  const n = prompt('Название сценария для удаления:');
+  if (n === null || !n.trim()) return;
+  location.href = '/sshdash?delpb=1&pbname=' + encodeURIComponent(n.trim());
+}
 function editAlias(host, cur, note) {
   const n = prompt('Имя машины (оставить пустым = удалить метку):', cur || '');
   if (n === null) return;
@@ -642,7 +698,13 @@ function toggleProblems() {
 </script>
   <div class="bwrap">
     <input type="hidden" name="broadcast" value="1">
-    <input type="text" name="bcmd" placeholder="команда для выбранных машин, напр. sys:disks" value="<?= htmlspecialchars($bcmdSaved) ?>">
+    <select id="pbsel" onchange="if(this.value)document.getElementById('bcmd').value=this.value" style="max-width:280px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px">
+      <option value="">⚡ Быстрые действия…</option>
+<?php foreach ($playbooks as $pb) { echo '<option value="' . htmlspecialchars($pb['c']) . '">' . htmlspecialchars($pb['n']) . '</option>'; } ?>
+    </select>
+    <a href="#" class="btn sm" onclick="addPlaybook();return false" title="добавить свой сценарий">➕</a>
+    <a href="#" class="btn sm" onclick="delPlaybook();return false" title="удалить сценарий">🗑</a>
+    <input type="text" name="bcmd" id="bcmd" placeholder="команда для выбранных машин, напр. sys:disks" value="<?= htmlspecialchars($bcmdSaved) ?>">
     <button type="submit">▶ Выполнить на выбранных</button>
   </div>
   </form>
