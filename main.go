@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gpty "github.com/aymanbagabas/go-pty"
@@ -44,6 +45,13 @@ type config struct {
 }
 
 var buildStamp = "dev" // переопределяется при сборке: -ldflags "-X portassh.buildStamp=..."
+
+// activeClient — текущий SSH-клиент к relay: обработчик событий питания
+// (power_windows.go) закрывает его при Resume/Sleep вместо ожидания TCP-таймаута.
+var (
+	activeClient atomic.Pointer[gossh.Client]
+	resumeHint   atomic.Bool // true сразу после Resume: реконнект за 2 с, без backoff
+)
 
 const (
 	roleUser  = "user"
@@ -128,6 +136,7 @@ func main() {
 		}
 	}()
 	if cfg.relay != "" {
+		startPowerWatcher()
 		relayLoop(cfg)
 		return
 	}
@@ -430,6 +439,10 @@ func relayLoop(cfg config) {
 		port = chosen
 		if err != nil {
 			log.Printf("tunnel: %v; retrying in %s", err, delay)
+			if resumeHint.Swap(false) {
+				// пробуждение: коннект гарантированно мёртв, не копим backoff
+				delay = 2 * time.Second
+			}
 			time.Sleep(delay)
 			// exponential backoff capped at 30 s (ISSUES.md #5)
 			if delay < 30*time.Second {
@@ -452,23 +465,34 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 	if !strings.Contains(addr, ":") {
 		addr += ":22"
 	}
-	client, err := gossh.Dial("tcp", addr, &gossh.ClientConfig{
+	// TCP keepalive 15 с: мёртвый после сна/обрыва сокет закрывается сам за ~45 с
+	d := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 15 * time.Second}
+	conn, err := d.Dial("tcp", addr)
+	if err != nil {
+		return wantPort, err
+	}
+	cc, chans, reqs, err := gossh.NewClientConn(conn, addr, &gossh.ClientConfig{
 		User:              cfg.relayUser,
 		Auth:              []gossh.AuthMethod{gossh.PublicKeys(signer)},
 		HostKeyCallback:   gossh.FixedHostKey(hostKey),
 		HostKeyAlgorithms: []string{gossh.KeyAlgoED25519}, // only the baked ed25519 relay key
-		Timeout:           10 * time.Second,
 	})
 	if err != nil {
+		_ = conn.Close()
 		return wantPort, err
 	}
+	client := gossh.NewClient(cc, chans, reqs)
 	defer client.Close()
+	activeClient.Store(client)
+	defer activeClient.Store(nil)
 
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
 		for range t.C {
 			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+				// соединение умерло (сон, обрыв сети) — не ждём TCP-таймаут
+				_ = client.Close()
 				return
 			}
 		}
