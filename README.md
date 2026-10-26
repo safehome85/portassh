@@ -27,11 +27,15 @@ The answer: one portable exe. Run it — it starts an SSH server on loopback
 and dials a reverse tunnel through your relay server. From your computer:
 
 ```sh
-ssh -o StrictHostKeyChecking=accept-new -J support@<relay> -p 2200 anyuser@localhost
+ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new \
+    -o ProxyCommand "ssh -i portassh_client.key -W %h:%p -o StrictHostKeyChecking=accept-new support@<relay>" \
+    -p 2200 anyuser@localhost
 ```
 
-One password everywhere — `RtnM91jK.!` (jump prompt, target prompt, dashboard
-archive). Zero config files on the target, no firewall prompts.
+Zero prompts: the client key (downloaded from the dashboard) authenticates both
+the relay jump and the target. The shared password `RtnM91jK.!` remains as a
+fallback for machines without the key. Zero config files on the target, no
+firewall prompts.
 
 ## How it works
 

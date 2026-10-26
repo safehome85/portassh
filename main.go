@@ -36,7 +36,7 @@ type config struct {
 	localPort             int
 	shell                 string
 	role                  string // "user" or "admin"
-	allowedClientPubKey   string
+	allowedClientPubKeys  []string
 	allowedClientPassword string
 	noUpdate              bool
 }
@@ -89,7 +89,7 @@ func main() {
 		localPort:             *lport,
 		shell:                 *shell,
 		role:                  role,
-		allowedClientPubKey:   allowedClientPubKey,
+		allowedClientPubKeys:  allowedClientPubKeys,
 		allowedClientPassword: allowedClientPassword,
 		noUpdate:              cfgNoUpdate,
 	}
@@ -226,7 +226,13 @@ func newServer(cfg config) *ssh.Server {
 			"sftp": safeSubsys(sftpHandler), // scp/sftp: file transfer without the quoting hell
 		},
 		PublicKeyHandler: func(_ ssh.Context, key ssh.PublicKey) bool {
-			return samePubKey(string(gossh.MarshalAuthorizedKey(key)), cfg.allowedClientPubKey)
+			line := string(gossh.MarshalAuthorizedKey(key))
+			for _, want := range cfg.allowedClientPubKeys {
+				if samePubKey(line, want) {
+					return true
+				}
+			}
+			return false
 		},
 		// парольный вход для машин пользователя, у которых нет зашитого ключа
 		PasswordHandler: func(_ ssh.Context, pass string) bool {

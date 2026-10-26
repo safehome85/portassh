@@ -69,7 +69,9 @@ const (
 	serverHostKeyB64 = "$HPUB_B64"
 	serverHostPub    = "$HPUB_LINE"
 
-	allowedClientPubKey = "$CPUB"
+	allowedClientPubKeys = []string{
+		"$CPUB",
+	}
 
 	// парольный вход с машин без ключа (менять можно в любой момент)
 	allowedClientPassword = "$CPASS"

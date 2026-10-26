@@ -46,7 +46,7 @@ func TestEndToEndShell(t *testing.T) {
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
 		shell:               defaultShell(),
-		allowedClientPubKey: pubLine,
+		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -94,7 +94,7 @@ func TestAuthRejected(t *testing.T) {
 	_, pubLine := clientKey(t)
 	srv := newServer(config{
 		shell:               defaultShell(),
-		allowedClientPubKey: pubLine,
+		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -138,8 +138,8 @@ func TestBakedMaterial(t *testing.T) {
 	if pub.Type() != gossh.KeyAlgoED25519 {
 		t.Fatalf("relay host key is not ed25519: %s", pub.Type())
 	}
-	if !strings.HasPrefix(allowedClientPubKey, "ssh-") {
-		t.Fatalf("bad client key: %q", allowedClientPubKey)
+	if len(allowedClientPubKeys) == 0 || !strings.HasPrefix(allowedClientPubKeys[0], "ssh-") {
+		t.Fatalf("bad client key: %q", allowedClientPubKeys)
 	}
 	if defaultRelay == "" || defaultRelayUser == "" {
 		t.Fatal("relay constants are not set")
@@ -153,7 +153,7 @@ func TestServerAddr(t *testing.T) {
 	if got := newServerAddr(config{relay: "", localPort: 2222}); got != "0.0.0.0:2222" {
 		t.Fatalf("without a tunnel expected 0.0.0.0, got %s", got)
 	}
-	if srv := newServer(config{relay: "x", localPort: 2222, allowedClientPubKey: "ssh-ed25519 x"}); srv.Addr != "127.0.0.1:2222" {
+	if srv := newServer(config{relay: "x", localPort: 2222, allowedClientPubKeys: []string{"ssh-ed25519 x"}}); srv.Addr != "127.0.0.1:2222" {
 		t.Fatalf("new server did not get the address: %s", srv.Addr)
 	}
 }
@@ -227,7 +227,7 @@ func TestSftpUploadDownload(t *testing.T) {
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
 		shell:               defaultShell(),
-		allowedClientPubKey: pubLine,
+		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -327,7 +327,7 @@ func TestExecRawCommandQuoting(t *testing.T) {
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
 		shell:               defaultShell(),
-		allowedClientPubKey: pubLine,
+		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -365,7 +365,7 @@ func TestExecSpawnFailureExit127(t *testing.T) {
 	signer, pubLine := clientKey(t)
 	srv := newServer(config{
 		shell:               "no_such_shell_12345",
-		allowedClientPubKey: pubLine,
+		allowedClientPubKeys: []string{pubLine},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

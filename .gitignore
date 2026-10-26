@@ -19,3 +19,6 @@ grill-plan.md
 
 # go
 *.test
+
+# client-ключ раздаётся с дашборда, в репо нельзя
+portassh_client_key*

