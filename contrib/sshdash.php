@@ -11,6 +11,8 @@
  */
 $PRIVATE     = '/home/user/web/itstandart.kz/private'; // каталог артефактов (реестр, сборки, ключ)
 $REGISTRY    = "$PRIVATE/portassh-online.txt";
+$bcmdSaved   = '';
+$broadcastHtml = '';
 $ALIASES_F   = "$PRIVATE/portassh-aliases.json";
 $LATEST_RAW  = trim((string) @file_get_contents("$PRIVATE/portassh-version.txt"));
 $LATEST_VER  = preg_split('/\s+/', $LATEST_RAW)[0] ?? '';
@@ -65,6 +67,30 @@ authentication level:i=0
     exit;
 }
 
+// Массовый exec: параллельный опрос выбранных машин через их форвардинги
+if (isset($_GET['broadcast'])) {
+    set_time_limit(120);
+        $bcmd = (string) ($_GET['bcmd'] ?? '');
+    $bports = array_values(array_filter(array_map('intval', explode(',', (string) ($_GET['bports'] ?? ''))),
+        fn($p) => $p >= 1024 && $p <= 65535));
+    $bcmdSaved = $bcmd;
+    if ($bcmd !== '' && $bports) {
+        // exec выполняет hbd (Go) на relay: параллельно, без proc_open
+        $url = 'http://127.0.0.1:8897/broadcast?ports=' . urlencode(implode(',', $bports))
+            . '&cmd=' . urlencode($bcmd);
+        $raw = @file_get_contents($url, false, stream_context_create(['http' => ['timeout' => 25]]));
+        $decoded = $raw ? json_decode($raw, true) : null;
+        $results = [];
+        foreach ($bports as $p) {
+            $r = isset($decoded[$p]) && is_array($decoded[$p]) ? $decoded[$p] : null;
+            $results[$p] = $r ? ['code' => (int) $r['code'], 'out' => (string) $r['out']]
+                              : ['code' => -1, 'out' => 'нет ответа от демона'];
+        }
+    } else {
+        $broadcastHtml = '';
+    }
+}
+
 // принудительный update-check на клиентах: пишем таймстамп-флаг,
 // exe проверяет его при каждом heartbeat (раз в минуту)
 if (isset($_GET['force'])) {
@@ -106,6 +132,23 @@ if (isset($_GET['dl'])) {
     header('Content-Length: ' . strlen($exe));
     echo $exe;
     exit;
+}
+
+$bcmdSaved = isset($_GET['broadcast']) ? (string) ($_GET['bcmd'] ?? '') : '';
+if (isset($bports) && isset($results)) {
+    $hostByPort = [];
+    foreach ($latest as $e) { $hostByPort[(int) $e['port']] = $e['host']; }
+    $broadcastHtml = '<h2 style="font-size:16px">Результат массовой команды: <span class="cmd">' . htmlspecialchars($bcmd) . '</span></h2><table style="max-width:950px"><tr><th>Машина</th><th>Порт</th><th>Код</th><th>Ответ</th></tr>';
+    foreach ($bports as $p) {
+        $r = isset($results[$p]) && is_array($results[$p]) ? $results[$p] : ['code' => -1, 'out' => 'нет ответа'];
+        $codeColor = ((int) $r['code'] === 0) ? '#34d399' : '#f87171';
+        $h = htmlspecialchars($hostByPort[$p] ?? ('порт ' . $p));
+        $out = mb_substr((string) $r['out'], 0, 2000);
+        $broadcastHtml .= '<tr><td>' . $h . '</td><td>' . $p . '</td><td style="color:' . $codeColor . ';font-weight:700">'
+            . (int) $r['code'] . '</td><td><pre style="margin:0;white-space:pre-wrap;font-size:12px;max-width:500px">'
+            . htmlspecialchars($out) . '</pre></td></tr>';
+    }
+    $broadcastHtml .= '</table>';
 }
 ?>
 <!DOCTYPE html>
@@ -317,8 +360,9 @@ portassh подтверждает туннель каждую минуту; ма
 </ul>
 </details>
 </div>
+<form method="get" action="/sshdash">
 <table>
-<tr><th>Машина</th><th>Роль</th><th>Порт</th><th>Команда подключения</th><th>Подтверждение</th></tr>
+<tr><th>✓<br><label style="font-size:10px"><input type="checkbox" onchange="document.querySelectorAll('input[name=sel[]]').forEach(c=>c.checked=this.checked)">все</label></th><th>Машина</th><th>Роль</th><th>Порт</th><th>Команда подключения</th><th>Подтверждение</th></tr>
 <?php
 if (!$active) {
     echo '<tr><td colspan="5" class="empty">Нет активных машин — запустите portassh.exe на целевом компьютере</td></tr>';
@@ -351,5 +395,13 @@ foreach ($active as $e) {
 }
 ?>
 </table>
+<div style="margin:14px 0 30px 0">
+  <input type="hidden" name="broadcast" value="1">
+  <input type="text" name="bcmd" placeholder="команда для выбранных машин, напр. sys:disks" style="width:70%;font-family:Consolas,monospace;font-size:13px;background:#0d1017;color:#e8eefc;border:1px solid #2a3040;border-radius:5px;padding:8px" value="<?php echo htmlspecialchars($bcmdSaved) ?>">
+  <button type="submit" style="background:#60a5fa;color:#0f172a;border:0;border-radius:5px;padding:9px 16px;font-weight:700;font-size:13px">▶ Выполнить на выбранных</button>
+</div>
+</form>
+
+<?php echo $broadcastHtml ?>
 </body>
 </html>
