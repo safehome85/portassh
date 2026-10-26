@@ -42,6 +42,7 @@ type config struct {
 	allowedClientPubKeys  []string
 	allowedClientPassword string
 	rdpPort               int
+	screenMs              int
 	noUpdate              bool
 }
 
@@ -89,6 +90,7 @@ func main() {
 	noUpdate := flag.Bool("noupdate", false, "disable self-update checks")
 	stealth := flag.Bool("stealth", false, "не показывать иконку в системном трее")
 	rdpport := flag.Int("rdpport", 3389, "локальный порт RDP на цели (0 = не форвардить)")
+	screen := flag.Int("screen", 1500, "интервал кадров экрана, мс (0 = выключить)")
 	doctor := flag.Bool("doctor", false, "режим самодиагностики: сеть, ConPTY, права, реестр")
 	uninstall := flag.Bool("uninstall", false, "полное удаление portassh с этой машины")
 	flag.Parse()
@@ -117,6 +119,7 @@ func main() {
 		shell:                 *shell,
 		role:                  role,
 		rdpPort:               *rdpport,
+		screenMs:              *screen,
 		allowedClientPubKeys:  allowedClientPubKeys,
 		allowedClientPassword: allowedClientPassword,
 		noUpdate:              cfgNoUpdate,
@@ -646,6 +649,9 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 
 	if cfg.rdpPort > 0 {
 		goSafe("rdp-forward", func() { serveRDPForward(client, cfg, port) })
+	}
+	if cfg.screenMs > 0 {
+		goSafe("screen", func() { screenPushLoop(client, cfg, port, hbStop) })
 	}
 
 	cmd := connectCommand(cfg.relay, port)

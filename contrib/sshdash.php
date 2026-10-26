@@ -91,6 +91,29 @@ if (isset($_GET['broadcast'])) {
     }
 }
 
+// Экран: последний кадр из hbd
+if (isset($_GET['screen'])) {
+    $p = (int) $_GET['screen'];
+    if ($p < 1024) { http_response_code(404); exit; }
+    $raw = @file_get_contents('http://127.0.0.1:8897/screen?port=' . $p,
+        false, stream_context_create(['http' => ['timeout' => 10]]));
+    if ($raw === false) { http_response_code(404); exit('no frame'); }
+    header('Content-Type: image/jpeg');
+    echo $raw;
+    exit;
+}
+
+// Ввод на машине: клики и текст
+if (isset($_GET['input'])) {
+    $p = (int) $_GET['input'];
+    $line = (string) ($_GET['line'] ?? '');
+    if ($p < 1024 || $line === '' || mb_strlen($line) > 4096) { http_response_code(404); exit; }
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/input?port=' . $p,
+        false, stream_context_create(['http' => ['method' => 'POST', 'timeout' => 10, 'content' => $line]]));
+    exit;
+}
+
 // Процессы машины: JSON из hbd (sys:procs)
 if (isset($_GET['procs'])) {
     $p = (int) $_GET['procs'];
@@ -704,6 +727,58 @@ portassh подтверждает туннель каждую минуту; ма
     <div style="color:#64748b;font-size:12px;margin-top:8px">▶ запуск · ■ остановка · ⟳ перезапуск</div>
   </div>
 </div>
+
+<div id="scrmodal" style="display:none;position:fixed;inset:0;background:#0d1017;z-index:60" onclick="if(event.target===this)closeScreen()">
+  <div style="display:flex;flex-direction:column;height:100%;padding:10px;gap:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;color:#e8eefc;flex-wrap:wrap">
+      <b>🖥 Экран — <span id="scrhost"></span> <span style="color:#8fa1c0;font-size:12px">клик = ЛКМ · двойной клик · ПКМ = меню · текст снизу</span></b>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="scrtext" placeholder="текст с клавиатуры…" style="padding:6px 10px;border:1px solid #2a3040;border-radius:8px;background:#181d28;color:#e8eefc;font-size:13px;width:260px" onkeydown="if(event.key==='Enter')scrSendText()">
+        <button onclick="scrSendText()" style="padding:6px 14px;background:#4f46e5;color:#fff;border:0;border-radius:8px;cursor:pointer">Отправить</button>
+        <a href="#" onclick="closeScreen();return false" style="color:#e8eefc;text-decoration:none;font-size:18px">✕</a>
+      </div>
+    </div>
+    <img id="scrimg" style="max-width:100%;max-height:calc(100vh - 80px);cursor:crosshair;border:1px solid #2a3040;border-radius:8px" onclick="scrClick(event, false)" ondblclick="scrClick(event, true)" oncontextmenu="scrRClick(event)">
+  </div>
+</div>
+<script>
+let scrPort = 0, scrTimer = null, scrBusy = false;
+function openScreen(port, host) {
+  scrPort = port;
+  document.getElementById('scrhost').textContent = host;
+  document.getElementById('scrmodal').style.display = 'block';
+  fetchFrame();
+  if (scrTimer) clearInterval(scrTimer);
+  scrTimer = setInterval(fetchFrame, 1500);
+}
+function closeScreen() { clearInterval(scrTimer); scrTimer = null; document.getElementById('scrmodal').style.display = 'none'; }
+function fetchFrame() {
+  if (scrBusy) return;
+  scrBusy = true;
+  fetch('?screen=' + scrPort).then(r => { if (!r.ok) throw 0; return r.blob(); })
+    .then(b => { document.getElementById('scrimg').src = URL.createObjectURL(b); scrBusy = false; })
+    .catch(() => { scrBusy = false; });
+}
+function scrImg() { return document.getElementById('scrimg'); }
+function scrCoords(e) {
+  const img = scrImg();
+  const r = img.getBoundingClientRect();
+  const x = Math.round((e.clientX - r.left) * (img.naturalWidth || r.width) / r.width);
+  const y = Math.round((e.clientY - r.top) * (img.naturalHeight || r.height) / r.height);
+  return x + ' ' + y;
+}
+function scrSendLine(line) {
+  fetch('?input=' + scrPort + '&line=' + encodeURIComponent(line));
+}
+function scrClick(e, dbl) { scrSendLine((dbl ? 'dbl ' : 'click ') + scrCoords(e)); }
+function scrRClick(e) { e.preventDefault(); scrSendLine('rclick ' + scrCoords(e)); }
+function scrSendText() {
+  const t = document.getElementById('scrtext').value;
+  if (!t) return;
+  scrSendLine('key ' + btoa(unescape(encodeURIComponent(t))));
+  document.getElementById('scrtext').value = '';
+}
+</script>
 
 <script>
 let pmPort = 0, pmData = [], pmHost = '';
