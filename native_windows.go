@@ -13,27 +13,33 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"unsafe"
 
 	ssh "github.com/gliderlabs/ssh"
 	"golang.org/x/sys/windows"
 )
 
-var procK32GetProcessMemoryInfo = windows.NewLazySystemDLL("kernel32.dll").NewProc("K32GetProcessMemoryInfo")
+var (
+	procK32GetProcessMemoryInfo = windows.NewLazySystemDLL("kernel32.dll").NewProc("K32GetProcessMemoryInfo")
+	procPSGetProcessMemoryInfo  = syscall.NewLazyDLL("psapi.dll").NewProc("GetProcessMemoryInfo")
+)
 
+// SIZE_T зависит от разрядности — uintptr совпадает на 386 и amd64.
 type processMemoryCounters struct {
 	Cb                      uint32
 	PageFaultCount          uint32
-	PeakWorkingSetSize      uint64
-	WorkingSetSize          uint64
-	QuotaPeakPagedPoolUsage uint64
-	QuotaPagedPoolUsage     uint64
-	QuotaNonPagedPoolUsage  uint64
-	PagefileUsage           uint64
-	PeakPagefileUsage       uint64
+	PeakWorkingSetSize      uintptr
+	WorkingSetSize          uintptr
+	QuotaPeakPagedPoolUsage uintptr
+	QuotaPagedPoolUsage     uintptr
+	QuotaNonPagedPoolUsage  uintptr
+	PagefileUsage           uintptr
+	PeakPagefileUsage       uintptr
 }
 
 // procWorkingSetKB: рабочий набор процесса в КБ (-1 = недоступен).
@@ -43,12 +49,16 @@ func procWorkingSetKB(pid uint32) int64 {
 		return -1
 	}
 	defer windows.CloseHandle(h)
-	var mc processMemoryCounters
-	mc.Cb = uint32(unsafe.Sizeof(mc))
-	if r, _, _ := procK32GetProcessMemoryInfo.Call(uintptr(h), uintptr(unsafe.Pointer(&mc)), unsafe.Sizeof(mc)); r == 0 {
+	// WOW64: thunked API требует 64-битный размер структуры — буфер с запасом
+	buf := make([]byte, 128)
+	mc := (*processMemoryCounters)(unsafe.Pointer(&buf[0]))
+	mc.Cb = uint32(len(buf))
+	r, _, err := procK32GetProcessMemoryInfo.Call(uintptr(h), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if r == 0 {
+		log.Printf("meminfo pid=%d: %v", pid, err)
 		return -1
 	}
-	return int64(mc.WorkingSetSize / 1024)
+	return int64(mc.WorkingSetSize)
 }
 
 // killProcess: TerminateProcess с защитой от самоубийства и системных PID.
@@ -148,7 +158,7 @@ func sysNative(s ssh.Session, sub string) bool {
 			return true
 		}
 		for {
-			fmt.Fprintf(s, "%d %s\n", pe.ProcessID, windows.UTF16ToString(pe.ExeFile[:]))
+			fmt.Fprintf(s, "%d %s %d\n", pe.ProcessID, windows.UTF16ToString(pe.ExeFile[:]), procWorkingSetKB(pe.ProcessID))
 			if err := windows.Process32Next(snap, &pe); err != nil {
 				break
 			}
