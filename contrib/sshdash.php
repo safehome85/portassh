@@ -91,6 +91,27 @@ if (isset($_GET['broadcast'])) {
     }
 }
 
+// Процессы машины: JSON из hbd (sys:procs)
+if (isset($_GET['procs'])) {
+    $p = (int) $_GET['procs'];
+    if ($p < 1024) { http_response_code(404); exit; }
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/broadcast?ports=' . $p . '&cmd=' . urlencode('sys:procs'),
+        false, stream_context_create(['http' => ['timeout' => 25]]));
+    exit;
+}
+
+// Снять задачу
+if (isset($_GET['killp'])) {
+    $p = (int) $_GET['killp'];
+    $pid = (int) ($_GET['pid'] ?? 0);
+    if ($p < 1024 || $pid <= 0) { http_response_code(404); exit; }
+    header('Content-Type: application/json');
+    echo @file_get_contents('http://127.0.0.1:8897/broadcast?ports=' . $p . '&cmd=' . urlencode('sys:kill ' . $pid),
+        false, stream_context_create(['http' => ['timeout' => 25]]));
+    exit;
+}
+
 // Инвентарь: снимок подсистемы info цели → кэш private/inv_<порт>.json
 if (isset($_GET['inv'])) {
     set_time_limit(60);
@@ -432,16 +453,18 @@ function filterRows(q) {
       $editBtn = '<a href="#" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
                . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
                . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false" title="метка/заметка">✏️</a>';
+      $btnHtml = '<a class="btn sm primary" href="https://itstandart.kz:8899/wsterm?port=' . (int) $e['port'] . '" target="_blank">🖥 Терминал</a>'
+               . ' <a class="btn sm sky" href="?rdp=' . (int) $e['port'] . '" title="скачать .rdp">🖥️ RDP</a>'
+               . ' <a class="btn sm" href="#" onclick="openProcs(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="диспетчер задач">📊 Процессы</a>'
+               . ' <a class="btn sm" href="?shadow=' . (int) $e['port'] . '" title="совместный экран">👥 Тень</a>'
+               . ' <a class="btn sm copy" href="#" onclick="copyCmd(' . json_encode($cmd) . ', this);return false">⧉ команда</a>';
       printf(
           '<tr data-search="%s"><td><input type="checkbox" name="sel[]" value="%d"></td>'
           . '<td><span class="dot"></span><span class="mname">%s</span>%s%s</td>'
           . '<td><span class="role-pill role-%s">%s</span></td>'
           . '<td><b>%d</b></td>'
-          . '<td class="btnrow"><span class="cmd">%s</span><div style="margin-top:6px">'
-          . '<a class="btn sm primary" href="https://itstandart.kz:8899/wsterm?port=%d" target="_blank">🖥 Терминал</a>'
-          . ' <a class="btn sm sky" href="?rdp=%d">🖥️ RDP</a> <a class="dl" style="background:#a78bfa;font-size:12px;padding:3px 10px" href="?shadow=' . htmlspecialchars($e['port']) . '" title="совместный экран вместе с пользователем (нужен -admin на машине)">👥 Тень</a>'
-          . ' <a class="btn sm copy" href="#" onclick="copyCmd(%s, this);return false">⧉ команда</a>'
-          . '</div></td><td class="ago">%s</td></tr>' . "\n",
+          . '<td class="btnrow">%s</td>'
+          . '<td class="ago">%s</td></tr>' . "\n",
           htmlspecialchars($search),
           (int) $e['port'],
           htmlspecialchars($dispName),
@@ -450,10 +473,7 @@ function filterRows(q) {
           $e['role'],
           $e['role'] === 'admin' ? 'админ' : 'пользователь',
           (int) $e['port'],
-          htmlspecialchars($cmd),
-          (int) $e['port'],
-          (int) $e['port'],
-          htmlspecialchars(json_encode($cmd)),
+          $btnHtml,
           htmlspecialchars($seen)
       );
   }

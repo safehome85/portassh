@@ -14,11 +14,58 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"unsafe"
 
 	ssh "github.com/gliderlabs/ssh"
 	"golang.org/x/sys/windows"
 )
+
+var procK32GetProcessMemoryInfo = windows.NewLazySystemDLL("kernel32.dll").NewProc("K32GetProcessMemoryInfo")
+
+type processMemoryCounters struct {
+	Cb                      uint32
+	PageFaultCount          uint32
+	PeakWorkingSetSize      uint64
+	WorkingSetSize          uint64
+	QuotaPeakPagedPoolUsage uint64
+	QuotaPagedPoolUsage     uint64
+	QuotaNonPagedPoolUsage  uint64
+	PagefileUsage           uint64
+	PeakPagefileUsage       uint64
+}
+
+// procWorkingSetKB: рабочий набор процесса в КБ (-1 = недоступен).
+func procWorkingSetKB(pid uint32) int64 {
+	h, err := windows.OpenProcess(0x0400|0x0010 /*QUERY_INFORMATION|VM_READ*/, false, pid)
+	if err != nil {
+		return -1
+	}
+	defer windows.CloseHandle(h)
+	var mc processMemoryCounters
+	mc.Cb = uint32(unsafe.Sizeof(mc))
+	if r, _, _ := procK32GetProcessMemoryInfo.Call(uintptr(h), uintptr(unsafe.Pointer(&mc)), unsafe.Sizeof(mc)); r == 0 {
+		return -1
+	}
+	return int64(mc.WorkingSetSize / 1024)
+}
+
+// killProcess: TerminateProcess с защитой от самоубийства и системных PID.
+func killProcess(pid uint32) error {
+	if pid <= 4 {
+		return fmt.Errorf("системный процесс")
+	}
+	if pid == uint32(os.Getpid()) {
+		return fmt.Errorf("это сам portassh")
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, pid)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	return windows.TerminateProcess(h, 1)
+}
 
 type svcEntry struct {
 	name, disp string
@@ -136,6 +183,23 @@ func sysNative(s ssh.Session, sub string) bool {
 		s.Exit(0)
 		return true
 	default:
+		// sys:kill <pid> — «снять задачу» из веб-панели
+		if pidStr, ok := strings.CutPrefix(sub, "kill "); ok {
+			pid, err := strconv.Atoi(strings.TrimSpace(pidStr))
+			if err != nil || pid <= 4 || uint32(pid) == uint32(os.Getpid()) {
+				fmt.Fprintln(s, "sys: kill отклонён")
+				s.Exit(1)
+				return true
+			}
+			if err := killProcess(uint32(pid)); err != nil {
+				fmt.Fprintf(s, "sys: kill %d: %v\n", pid, err)
+				s.Exit(1)
+				return true
+			}
+			fmt.Fprintf(s, "sys: процесс %d завершён\n", pid)
+			s.Exit(0)
+			return true
+		}
 		return false
 	}
 	s.Exit(0)
