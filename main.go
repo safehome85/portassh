@@ -725,7 +725,7 @@ func exeDir() string {
 }
 
 func connectCommand(relay string, port int) string {
-	return fmt.Sprintf("ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@%s -p %d anyuser@localhost", relay, port)
+	return fmt.Sprintf("ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@%s -p %d anyuser@localhost", relay, port)
 }
 
 // ownVersion: первые 12 символов sha256 своего exe — идентификатор сборки

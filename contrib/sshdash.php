@@ -394,7 +394,7 @@ function filterRows(q) {
   foreach ($active as $e) {
       $sec = $sysNow - $e['ts'];
       $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
-      $cmd = "ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
+      $cmd = "ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
       $alias = $e['alias'];
       $meta = $e['meta'];
       if ($alias !== null && $alias['name'] !== '') {
@@ -560,7 +560,7 @@ portassh подтверждает туннель каждую минуту; ма
 <span class="cmd">reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f &amp;&amp; netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=tcp localport=3389</span>
 (Windows 10 Home: дополнительно нужен RDP Wrapper — штатного RDP-хоста в Home нет.)</li>
 <li>Постройте туннель для RDP (порт машины + 10000):
-<span class="cmd">ssh -L 12200:127.0.0.1:12200 support@5.35.81.198</span>
+<span class="cmd">ssh -C -L 12200:127.0.0.1:12200 support@5.35.81.198</span>
 (для машины с портом 2200; цифру замените на порт из таблицы)</li>
 <li>Скачайте кнопкой «🖥️ RDP» файл и откройте его — подключение пойдёт
 на localhost:12200 через туннель.</li>
@@ -574,7 +574,7 @@ portassh подтверждает туннель каждую минуту; ма
 <p style="font-size:12.5px;color:var(--muted)">Команду можно запускать из любой папки, если
 в ней лежит portassh_client.key. Храните ключ только у себя — он заменяет пароль.</p>
 <p>Команда из таблицы выглядит так:</p>
-<p class="cmd">ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@5.35.81.198 -p &lt;ПОРТ&gt; anyuser@localhost</p>
+<p class="cmd">ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@5.35.81.198 -p &lt;ПОРТ&gt; anyuser@localhost</p>
 <p>Если ключа нет (или он не подхватился), подключение попросит пароль <b>два раза</b> —
 оба раза вводится один и тот же пароль (резервный вход):</p>
 <table class="pwtab">
