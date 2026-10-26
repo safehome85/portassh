@@ -11,6 +11,7 @@
  */
 $PRIVATE     = '/home/user/web/itstandart.kz/private'; // каталог артефактов (реестр, сборки, ключ)
 $REGISTRY    = "$PRIVATE/portassh-online.txt";
+$LATEST_VER  = trim((string) @file_get_contents("$PRIVATE/portassh-version.txt"));
 $EXE         = "$PRIVATE/portassh.exe"; // сборка для скачивания (копируется cron'ом)
 $RELAY       = '5.35.81.198'; // IP/домен relay-сервера для колонки «Команда подключения»
 $ACTIVE_SECS = 180;           // heartbeat у exe раз в 60 с — запас ×3
@@ -118,11 +119,17 @@ foreach ($lines as $line) {
     $osv  = isset($p[5]) && $p[5] !== '-' ? $p[5] : '';
     $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
     $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
+    $ver  = isset($p[8]) && $p[8] !== '-' ? $p[8] : '';
     $meta = [];
     if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
     if ($osv !== '')   { $meta[] = 'OS ' . htmlspecialchars($osv); }
     if ($disk !== null){ $meta[] = 'C: ' . $disk . 'GB'; }
     if ($ram !== null) { $meta[] = 'RAM ' . $ram . '%'; }
+    if ($ver !== '') {
+        $meta[] = $LATEST_VER && $ver !== $LATEST_VER
+            ? '<span style="color:#f59e0b">v ' . htmlspecialchars($ver) . ' (устарела)</span>'
+            : '<span style="color:#34d399">v ' . htmlspecialchars($ver) . '</span>';
+    }
     if (!in_array($role, ['user', 'admin'], true)) continue;
     // формат времени из реестра: "ДД.ММ_ЧЧ:ММ" (год не пишется)
     [$dmy, $hm] = explode('_', $t);
@@ -139,7 +146,7 @@ foreach ($lines as $line) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right"><a class="dl" href="?dl=zip">⬇ Скачать .zip</a> &nbsp; <a class="dl" style="background:#60a5fa" href="?dl=bin">⬇ .bin</a> &nbsp; <a class="dl" style="background:#fbbf24" href="?dl=key">🔑 Ключ</a> &nbsp; <a class="dl" style="background:#f59e0b" href="?force=1" title="клиенты проверят обновление в течение минуты">⟳ Обновить клиентов</a><div style="text-align:right;color:#cbd6ea;font-size:12px;margin-top:6px">пароль архива и SSH (резерв): <b>RtnM91jK.!</b></div></span></h1>';
+echo '<h1>portassh — активные машины: <span class="count">' . count($active) . '</span> <span style="float:right"><a class="dl" href="?dl=zip">⬇ Скачать .zip</a> &nbsp; <a class="dl" style="background:#60a5fa" href="?dl=bin">⬇ .bin</a> &nbsp; <a class="dl" style="background:#fbbf24" href="?dl=key">🔑 Ключ</a> &nbsp; <a class="dl" style="background:#f59e0b" href="?force=1" title="клиенты проверят обновление в течение минуты">⟳ Обновить клиентов</a><div style="text-align:right;color:#cbd6ea;font-size:12px;margin-top:6px">актуальная сборка: <b>' . ($LATEST_VER ? htmlspecialchars(substr($LATEST_VER, 0, 12)) : '?') . '</b> · пароль архива и SSH (резерв): <b>RtnM91jK.!</b></div></span></h1>';
 
 // ---- Описание и инструкция ----
 $PW = 'RtnM91jK.!';

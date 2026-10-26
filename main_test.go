@@ -281,24 +281,24 @@ func TestSftpUploadDownload(t *testing.T) {
 
 func TestRegistryLineAndRoleDefaults(t *testing.T) {
 	when := time.Date(2026, 10, 24, 15, 4, 0, 0, time.Local)
-	line := registryLine("My-PC.1", 2200, roleUser, when, "user", "10.0.19045", 38, 42)
+	line := registryLine("My-PC.1", 2200, roleUser, when, "user", "10.0.19045", 38, 42, "abc123def456")
 	fields := strings.Fields(line)
-	if len(fields) != 8 {
+	if len(fields) != 9 {
 		t.Fatalf("registry line must have 8 fields: %q", line)
 	}
 	if fields[0] != "My-PC.1" || fields[1] != "2200" || fields[3] != "user" ||
-		fields[4] != "user" || fields[5] != "10.0.19045" || fields[6] != "38" || fields[7] != "42" {
+		fields[4] != "user" || fields[5] != "10.0.19045" || fields[6] != "38" || fields[7] != "42" || fields[8] != "abc123def456" {
 		t.Fatalf("bad registry line: %q", line)
 	}
-	if fields := strings.Fields(registryLine("pc", 2201, roleAdmin, when, "u", "os", 1, 2)); fields[3] != "admin" {
+	if fields := strings.Fields(registryLine("pc", 2201, roleAdmin, when, "u", "os", 1, 2, "ver012345678")); fields[3] != "admin" {
 		t.Fatal("admin role missing from the line")
 	}
 	// a newline in the name must not break the registry format
-	if bad := registryLine("evil\nline", 2200, roleUser, when, "u", "os", 1, 2); strings.ContainsAny(bad, "\n\r") {
+	if bad := registryLine("evil\nline", 2200, roleUser, when, "u", "os", 1, 2, "ver"); strings.ContainsAny(bad, "\n\r") {
 		t.Fatalf("newline injection: %q", bad)
 	}
 	// пустая телеметрия -> плейсхолдеры
-	if bad := registryLine("pc", 2200, roleUser, when, "", "", -1, -1); !strings.HasSuffix(bad, "- - -1 -1") {
+	if bad := registryLine("pc", 2200, roleUser, when, "", "", -1, -1, ""); !strings.HasSuffix(bad, "- - -1 -1 -") {
 		t.Fatalf("empty telemetry placeholders: %q", bad)
 	}
 

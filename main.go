@@ -653,6 +653,25 @@ func connectCommand(relay string, port int) string {
 	return fmt.Sprintf("ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@%s -p %d anyuser@localhost", relay, port)
 }
 
+// ownVersion: первые 12 символов sha256 своего exe — идентификатор сборки
+// (совпадает с version.txt на relay). Кэшируется: exe после self-update новый.
+var ownVersionCache atomic.Value // string
+
+func ownVersion() string {
+	if v, ok := ownVersionCache.Load().(string); ok && v != "" {
+		return v
+	}
+	v := "?"
+	if exe, err := os.Executable(); err == nil {
+		if b, err := os.ReadFile(exe); err == nil {
+			sum := sha256.Sum256(b)
+			v = hex.EncodeToString(sum[:])[:12]
+		}
+	}
+	ownVersionCache.Store(v)
+	return v
+}
+
 // persistedPortPath: файл рядом с exe хранит последний удачный relay-порт,
 // чтобы машина после рестарта и «призрачных» сбоев вернулась на свой порт.
 func persistedPortPath() string { return filepath.Join(exeDir(), "portassh_port.txt") }
@@ -718,10 +737,10 @@ func writeConnectionFile(cfg config) {
 // registryLine: "PC_NAME port time role username os_version free_disk_gb ram_load"
 // — the port is always field 2, time field 3 (backward compatible: дашборд
 // понимает и старые 4-польные строки).
-func registryLine(host string, port int, role string, when time.Time, username, osver string, diskGB int, ramLoad int) string {
-	extra := fmt.Sprintf("%s %s %d %d", sanitizeLine(username), sanitizeLine(osver), diskGB, ramLoad)
+func registryLine(host string, port int, role string, when time.Time, username, osver string, diskGB int, ramLoad int, version string) string {
+	extra := fmt.Sprintf("%s %s %d %d %s", sanitizeLine(username), sanitizeLine(osver), diskGB, ramLoad, sanitizeLine(version))
 	if username == "" || osver == "" || diskGB < 0 {
-		extra = "- - -1 -1"
+		extra = "- - -1 -1 -"
 	}
 	return fmt.Sprintf("%s %d %s %s %s", sanitizeLine(host), port, when.Format("02.01_15:04"), role, extra)
 }
@@ -740,7 +759,7 @@ func registerOnRelay(client *gossh.Client, cfg config) {
 		return
 	}
 	user, osver, disk, ram := telemetry()
-	line := registryLine(host, cfg.relayPort, cfg.role, time.Now(), user, osver, disk, ram)
+	line := registryLine(host, cfg.relayPort, cfg.role, time.Now(), user, osver, disk, ram, ownVersion())
 	sess, err := client.NewSession()
 	if err != nil {
 		return
