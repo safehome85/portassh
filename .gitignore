@@ -22,3 +22,5 @@ grill-plan.md
 
 # client-ключ раздаётся с дашборда, в репо нельзя
 portassh_client_key*
+build.ver
+portassh_client_key*

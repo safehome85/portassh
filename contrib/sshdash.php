@@ -272,7 +272,7 @@ foreach ($active as $e) {
         $e['role'],
         $e['role'] === 'admin' ? 'админ' : 'пользователь',
         htmlspecialchars($e['port']),
-        htmlspecialchars($cmd) . ' <a class="dl" style="background:#f59e0b;font-size:12px;padding:3px 10px" href="/wsterm?port=' . htmlspecialchars($e['port']) . '" target="_blank">🖥 Терминал</a>',
+        htmlspecialchars($cmd) . ' <a class="dl" style="background:#f59e0b;font-size:12px;padding:3px 10px" href="https://itstandart.kz:8899/wsterm?port=' . htmlspecialchars($e['port']) . '" target="_blank">🖥 Терминал</a>',
         htmlspecialchars($seen)
     );
 }
