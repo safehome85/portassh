@@ -477,17 +477,30 @@ func relayOnce(cfg config, wantPort int) (int, error) {
 	local := fmt.Sprintf("127.0.0.1:%d", cfg.localPort)
 	var ln net.Listener
 	port := wantPort
-	for p := wantPort; p <= wantPort+99; p++ { // busy — try the next one (up to 100 machines)
+	if persisted := readPersistedPort(); persisted > 0 && persisted != wantPort && wantPort == 2200 {
+		// машина со своим историческим портом: начинаем с него, а не с 2200
+		port = persisted
+	}
+	for p := port; p <= port+99; p++ { // busy — try the next one (up to 100 machines)
 		port = p
 		ln, err = client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
 		if err == nil {
 			break
+		}
+		if p == readPersistedPort() {
+			// «призрачный» порт прошлой сессии этой же машины — освобождаем
+			if reclaimGhost(client, p) {
+				if ln, err = client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p)); err == nil {
+					break
+				}
+			}
 		}
 	}
 	if err != nil {
 		return port, fmt.Errorf("remote listen: %w (port forwarding disabled on the relay?)", err)
 	}
 	defer ln.Close()
+	savePersistedPort(port)
 	log.Printf("tunnel: connected to %s as %s, forwarding 127.0.0.1:%d -> %s",
 		addr, cfg.relayUser, port, local)
 
@@ -579,6 +592,59 @@ func exeDir() string {
 
 func connectCommand(relay string, port int) string {
 	return fmt.Sprintf("ssh -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@%s -p %d anyuser@localhost", relay, port)
+}
+
+// persistedPortPath: файл рядом с exe хранит последний удачный relay-порт,
+// чтобы машина после рестарта и «призрачных» сбоев вернулась на свой порт.
+func persistedPortPath() string { return filepath.Join(exeDir(), "portassh_port.txt") }
+
+func readPersistedPort() int {
+	b, err := os.ReadFile(persistedPortPath())
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if n < 1024 || n > 65535 {
+		return 0
+	}
+	return n
+}
+
+func savePersistedPort(port int) {
+	if port < 1024 {
+		return
+	}
+	_ = os.WriteFile(persistedPortPath(), []byte(strconv.Itoa(port)+"\n"), 0o600)
+}
+
+// reclaimGhost: при аварийном разрыве sshd на relay держит порт занятым
+// (зависший post-auth процесс нашего же uid). Убиваем его и освобождаем порт.
+func reclaimGhost(client *gossh.Client, port int) bool {
+	sess, err := client.NewSession()
+	if err != nil {
+		return false
+	}
+	defer sess.Close()
+	out, err := sess.CombinedOutput(fmt.Sprintf(
+		"ss -tlnp | grep ':%d ' | grep -o 'pid=[0-9]*' | cut -d= -f2 | head -1", port))
+	if err != nil {
+		return false
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	if pid <= 1 {
+		return false // порт свободен или слушает чужой процесс
+	}
+	kill, err := client.NewSession()
+	if err != nil {
+		return false
+	}
+	defer kill.Close()
+	if err := kill.Run("kill " + strconv.Itoa(pid)); err != nil {
+		return false
+	}
+	time.Sleep(500 * time.Millisecond) // sshd освобождает порт не мгновенно
+	log.Printf("tunnel: reclaimed ghost port %d (stale session pid %d)", port, pid)
+	return true
 }
 
 func writeConnectionFile(cfg config) {
