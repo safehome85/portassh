@@ -15,6 +15,7 @@ import (
 	"os"
 	"reflect"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -189,8 +190,19 @@ func trayCopyCommand(hwnd uintptr) {
 	if hRaw == 0 {
 		return
 	}
-	if r, _, _ := procOpenClipboard.Call(hwnd); r == 0 {
+	// OpenClipboard часто занят менеджерами буфера обмена — без retry
+	// блокируется поток окна и трей «умирает» после первого клика
+	opened := false
+	for i := 0; i < 10 && !opened; i++ {
+		if r, _, _ := procOpenClipboard.Call(hwnd); r != 0 {
+			opened = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !opened {
 		procGlobalFree.Call(hRaw)
+		log.Print("tray: clipboard busy, copy skipped")
 		return
 	}
 	procEmptyClipboard.Call()
