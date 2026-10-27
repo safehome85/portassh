@@ -1439,8 +1439,8 @@ function toggleAICopilot() {
 function aiClearChat() {
   if (confirm('Очистить историю диалога с Copilot?')) {
     aiChatHistory = [];
-    sessionStorage.removeItem('pssh_ai_chat');
-    sessionStorage.removeItem('pssh_ai_html');
+    sessionStorage.removeItem('pssh_ai_chat_v2');
+    sessionStorage.removeItem('pssh_ai_html_v2');
     const box = document.getElementById('aimessages');
     box.innerHTML = '<div style="font-size:12.5px;color:#64748b;background:#f1f5f9;border-radius:8px;padding:10px;margin-bottom:8px">'
       + '👋 История очищена. Задайте новый вопрос о состоянии машин флота portassh!'
@@ -1540,8 +1540,8 @@ function aiAppendMsg(role, html, toolsUsed) {
 
   // Сохраняем состояние чата в sessionStorage
   try {
-    sessionStorage.setItem('pssh_ai_html', box.innerHTML);
-    sessionStorage.setItem('pssh_ai_chat', JSON.stringify(aiChatHistory));
+    sessionStorage.setItem('pssh_ai_html_v2', box.innerHTML);
+    sessionStorage.setItem('pssh_ai_chat_v2', JSON.stringify(aiChatHistory));
   } catch(e) {}
 }
 
@@ -1699,11 +1699,11 @@ async function doAjaxRefresh() {
 window.addEventListener('DOMContentLoaded', () => {
   // 1. Восстанавливаем сообщения и историю чата
   try {
-    const savedHtml = sessionStorage.getItem('pssh_ai_html');
+    const savedHtml = sessionStorage.getItem('pssh_ai_html_v2');
     if (savedHtml) {
       document.getElementById('aimessages').innerHTML = savedHtml;
     }
-    const savedChat = sessionStorage.getItem('pssh_ai_chat');
+    const savedChat = sessionStorage.getItem('pssh_ai_chat_v2');
     if (savedChat) {
       aiChatHistory = JSON.parse(savedChat);
     } else {
@@ -1764,7 +1764,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </div>
 
 <!-- Плавающий AI SysAdmin Copilot -->
-<div id="aicopilot" style="display:none;position:fixed;bottom:20px;right:20px;width:440px;height:600px;background:#fff;border:1px solid #cbd5e1;border-radius:14px;box-shadow:0 16px 40px rgba(15,23,42,.22);z-index:90;flex-direction:column;overflow:hidden">
+<div id="aicopilot" style="display:none;position:fixed;bottom:20px;right:20px;width:min(440px,calc(100vw - 24px));height:min(600px,calc(100vh - 40px));background:#fff;border:1px solid #cbd5e1;border-radius:14px;box-shadow:0 16px 40px rgba(15,23,42,.22);z-index:90;flex-direction:column;overflow:hidden">
   <div style="background:#4f46e5;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
     <div style="font-weight:700;font-size:14px">🤖 AI SysAdmin Copilot</div>
     <div style="display:flex;gap:10px;align-items:center">
@@ -1781,7 +1781,7 @@ window.addEventListener('DOMContentLoaded', () => {
     <select id="aimodel" onchange="aiModelChanged()" style="font-size:11.5px;padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;flex:1;min-width:0">
     </select>
   </div>
-  <div id="aimessages" style="flex:1;overflow-y:auto;overflow-x:hidden;padding:12px;display:flex;flex-direction:column;background:#fafafa">
+  <div id="aimessages" style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:12px;display:flex;flex-direction:column;background:#fafafa">
     <div style="font-size:12.5px;color:#64748b;background:#f1f5f9;border-radius:8px;padding:10px;margin-bottom:8px">
       👋 Привет! Я ваш AI-ассистент по флоту portassh. У меня есть доступ к процессам, службам, дискам, инвентарю и ошибкам журналов Windows. Спросите меня о состоянии машин!
     </div>
