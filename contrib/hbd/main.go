@@ -45,18 +45,56 @@ var (
 
 // allowlist: /home/portassh/allowed-hosts.txt — по одному хостнейму на строку.
 // Пустой/отсутствующий файл = принимать всех (обратная совместимость).
-// Утечка exe с зашитым туннельным ключом перестаёт наполнять реестр чужими машинами.
-var allowedHosts = func() map[string]bool {
-	m := map[string]bool{}
-	if b, err := os.ReadFile("/home/portassh/allowed-hosts.txt"); err == nil {
-		for _, l := range strings.Split(string(b), "\n") {
-			if h := strings.TrimSpace(l); h != "" {
-				m[h] = true
+// Проверка динамическая (stat mtime): добавление хоста не требует перезапуска hbd.
+var (
+	allowedMu    sync.RWMutex
+	allowedCache map[string]bool
+	allowedMtime time.Time
+	rejectedMu   sync.Mutex
+	lastRejected = map[string]time.Time{}
+)
+
+func isHostAllowed(host string) bool {
+	stat, err := os.Stat("/home/portassh/allowed-hosts.txt")
+	if err != nil || stat.Size() == 0 {
+		return true // missing or empty = allow all
+	}
+
+	allowedMu.Lock()
+	if allowedCache == nil || stat.ModTime().After(allowedMtime) {
+		m := make(map[string]bool)
+		if b, err := os.ReadFile("/home/portassh/allowed-hosts.txt"); err == nil {
+			for _, l := range strings.Split(string(b), "\n") {
+				if h := strings.TrimSpace(l); h != "" {
+					m[h] = true
+				}
 			}
 		}
+		allowedCache = m
+		allowedMtime = stat.ModTime()
 	}
-	return m
-}()
+	allowed := len(allowedCache) == 0 || allowedCache[host]
+	allowedMu.Unlock()
+
+	if !allowed {
+		recordRejectedHost(host)
+	}
+	return allowed
+}
+
+func recordRejectedHost(host string) {
+	rejectedMu.Lock()
+	defer rejectedMu.Unlock()
+	if time.Since(lastRejected[host]) < 5*time.Minute {
+		return
+	}
+	lastRejected[host] = time.Now()
+	f, err := os.OpenFile("/home/portassh/rejected-hosts.txt", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err == nil {
+		fmt.Fprintf(f, "%s %s\n", time.Now().Format("2006-01-02 15:04:05"), host)
+		f.Close()
+	}
+}
 
 func valid(line string) bool {
 	f := strings.Fields(line)
@@ -64,7 +102,7 @@ func valid(line string) bool {
 	if len(f) < 4 || len(f) > 12 {
 		return false
 	}
-	if len(allowedHosts) > 0 && !allowedHosts[f[0]] {
+	if !isHostAllowed(f[0]) {
 		return false
 	}
 	for i, x := range f {
@@ -508,10 +546,10 @@ func compact() {
 	if len(lines) > compKeep {
 		lines = lines[len(lines)-compKeep:]
 	}
-	if len(allowedHosts) > 0 {
+	if stat, err := os.Stat("/home/portassh/allowed-hosts.txt"); err == nil && stat.Size() > 0 {
 		kept := lines[:0]
 		for _, l := range lines {
-			if f := strings.Fields(l); len(f) > 0 && allowedHosts[f[0]] {
+			if f := strings.Fields(l); len(f) > 0 && isHostAllowed(f[0]) {
 				kept = append(kept, l)
 			}
 		}
@@ -525,6 +563,106 @@ func compact() {
 		return
 	}
 	log.Printf("online.txt rotated: kept %d lines", len(lines))
+}
+
+func allowHostHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Host string `json:"host"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Host = r.FormValue("host")
+	}
+	h := strings.TrimSpace(req.Host)
+	if h == "" || len(h) > 64 || strings.ContainsAny(h, " \t\r\n/\\'\";`$|&><") {
+		http.Error(w, "invalid host", http.StatusBadRequest)
+		return
+	}
+	allowedMu.Lock()
+	b, _ := os.ReadFile("/home/portassh/allowed-hosts.txt")
+	existing := strings.Split(string(b), "\n")
+	has := false
+	var cleaned []string
+	for _, l := range existing {
+		tr := strings.TrimSpace(l)
+		if tr != "" {
+			if tr == h {
+				has = true
+			}
+			cleaned = append(cleaned, tr)
+		}
+	}
+	if !has {
+		cleaned = append(cleaned, h)
+		_ = os.WriteFile("/home/portassh/allowed-hosts.txt", []byte(strings.Join(cleaned, "\n")+"\n"), 0644)
+	}
+	m := make(map[string]bool)
+	for _, x := range cleaned {
+		m[x] = true
+	}
+	allowedCache = m
+	allowedMtime = time.Now()
+	allowedMu.Unlock()
+
+	// Очищаем из rejected-hosts.txt
+	rejectedMu.Lock()
+	delete(lastRejected, h)
+	if rb, err := os.ReadFile("/home/portassh/rejected-hosts.txt"); err == nil {
+		var kept []string
+		for _, l := range strings.Split(string(rb), "\n") {
+			f := strings.Fields(l)
+			if len(f) >= 3 && f[2] == h {
+				continue
+			}
+			if strings.TrimSpace(l) != "" {
+				kept = append(kept, l)
+			}
+		}
+		_ = os.WriteFile("/home/portassh/rejected-hosts.txt", []byte(strings.Join(kept, "\n")+"\n"), 0644)
+	}
+	rejectedMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "host": h})
+}
+
+func rejectedHostsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	b, err := os.ReadFile("/home/portassh/rejected-hosts.txt")
+	if err != nil {
+		json.NewEncoder(w).Encode([]any{})
+		return
+	}
+	allowedMu.RLock()
+	cached := allowedCache
+	allowedMu.RUnlock()
+
+	type item struct {
+		Host string `json:"host"`
+		Time string `json:"time"`
+	}
+	seen := map[string]bool{}
+	var res []item
+	lines := strings.Split(string(b), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" {
+			continue
+		}
+		f := strings.Fields(l)
+		if len(f) >= 3 {
+			tStr := f[0] + " " + f[1]
+			h := f[2]
+			if !seen[h] && (cached == nil || !cached[h]) {
+				seen[h] = true
+				res = append(res, item{Host: h, Time: tStr})
+			}
+		}
+	}
+	json.NewEncoder(w).Encode(res)
 }
 
 func main() {
@@ -563,6 +701,8 @@ func main() {
 		http.HandleFunc("/input", inputHandler)
 		http.HandleFunc("/viewer", viewerHandler)
 		http.HandleFunc("/events", eventsHandler)
+		http.HandleFunc("/api/allow-host", allowHostHandler)
+		http.HandleFunc("/api/rejected-hosts", rejectedHostsHandler)
 		http.HandleFunc("/ai/config", aiConfigHandler)
 		http.HandleFunc("/ai/explain-events", explainEventsHandler)
 		http.HandleFunc("/ai/chat", aiChatHandler)

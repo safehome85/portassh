@@ -88,13 +88,13 @@ func stateText(st uint32) string {
 
 // svcControl: stop/start/restart службы через OpenSCManager + ControlService.
 func svcControl(action, name string) (string, error) {
-	mgr, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_ALL_ACCESS)
+	mgr, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
 		return "", fmt.Errorf("SCM: %w", err)
 	}
 	defer windows.CloseServiceHandle(mgr)
 	np, _ := windows.UTF16PtrFromString(name)
-	svc, err := windows.OpenService(mgr, np, windows.SERVICE_ALL_ACCESS)
+	svc, err := windows.OpenService(mgr, np, windows.SERVICE_QUERY_STATUS|windows.SERVICE_START|windows.SERVICE_STOP)
 	if err != nil {
 		return "", fmt.Errorf("служба %q не найдена: %w", name, err)
 	}
@@ -224,9 +224,9 @@ type memoryStatusEx struct {
 }
 
 // listAutoruns: точки автозагрузки без спавнов утилит — ключи реестра
-// Run/RunOnce (HKCU, HKLM, WOW6432Node) и содержимое папок Startup.
+// Run/RunOnce (HKCU, HKLM, WOW6432Node) и содержимое папок Startup с четким префиксом.
 func listAutoruns(s ssh.Session) {
-	collect := func(root registry.Key, sub string) {
+	collect := func(rootName string, root registry.Key, sub string) {
 		k, err := registry.OpenKey(root, sub, registry.QUERY_VALUE)
 		if err != nil {
 			return // ключа нет — не ошибка
@@ -238,21 +238,24 @@ func listAutoruns(s ssh.Session) {
 		}
 		for _, n := range names {
 			v, _, _ := k.GetStringValue(n)
-			fmt.Fprintf(s, "%s\\%s = %s\n", sub, n, v)
+			fmt.Fprintf(s, "%s\\%s\\%s = %s\n", rootName, sub, n, v)
 		}
 	}
-	collect(registry.CURRENT_USER, `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`)
-	collect(registry.CURRENT_USER, `SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`)
-	collect(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`)
-	collect(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`)
-	collect(registry.LOCAL_MACHINE, `SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`)
-	for _, d := range []string{
-		filepath.Join(os.Getenv("APPDATA"), `Microsoft\Windows\Start Menu\Programs\Startup`),
-		filepath.Join(os.Getenv("ProgramData"), `Microsoft\Windows\Start Menu\Programs\Startup`),
+	collect("HKCU", registry.CURRENT_USER, `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`)
+	collect("HKCU", registry.CURRENT_USER, `SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`)
+	collect("HKLM", registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`)
+	collect("HKLM", registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`)
+	collect("HKLM", registry.LOCAL_MACHINE, `SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`)
+	for _, item := range []struct {
+		label string
+		dir   string
+	}{
+		{"User Startup", filepath.Join(os.Getenv("APPDATA"), `Microsoft\Windows\Start Menu\Programs\Startup`)},
+		{"Common Startup", filepath.Join(os.Getenv("ProgramData"), `Microsoft\Windows\Start Menu\Programs\Startup`)},
 	} {
-		if ents, err := os.ReadDir(d); err == nil {
+		if ents, err := os.ReadDir(item.dir); err == nil {
 			for _, e := range ents {
-				fmt.Fprintf(s, "Startup\\%s\n", e.Name())
+				fmt.Fprintf(s, "%s\\%s\n", item.label, e.Name())
 			}
 		}
 	}

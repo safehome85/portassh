@@ -28,6 +28,8 @@ $PB_DEFAULTS = [
     ['💾 Место на дисках', 'sys:disks'],
     ['📊 Процессы с памятью', 'sys:procs'],
     ['🛠 Службы Windows', 'sys:svcs'],
+    ['🚀 Автозагрузка (Run / Startup)', 'sys:autoruns'],
+    ['⚠️ Ошибки журналов (EventLog)', 'sys:events System 10'],
     ['👤 Пользователь и машина', 'sys:whoami'],
     ['🧹 Очистить временные файлы', 'del /q /s %temp%\* && echo Очищено'],
     ['🌐 Сбросить DNS-кэш', 'ipconfig /flushdns'],
@@ -246,13 +248,30 @@ if (isset($_GET['events'])) {
     exit;
 }
 
+// Добавить хост в разрешенные (allowed-hosts.txt) через API hbd
+if (isset($_GET['allow_host']) && $_GET['allow_host'] !== '') {
+    $h = trim((string)$_GET['allow_host']);
+    if (preg_match('/^[A-Za-z0-9._-]+$/', $h)) {
+        $ctx = stream_context_create(['http' => [
+            'method' => 'POST',
+            'timeout' => 5,
+            'header' => "Content-Type: application/json\r\n",
+            'content' => json_encode(['host' => $h]),
+        ]]);
+        @file_get_contents('http://127.0.0.1:8897/api/allow-host', false, $ctx);
+    }
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+    exit;
+}
+
 // AI: анализ журнала событий
 if (isset($_GET['ai_explain_events'])) {
+    @set_time_limit(180);
     $body = file_get_contents('php://input');
     header('Content-Type: application/json');
     $ctx = stream_context_create(['http' => [
         'method' => 'POST',
-        'timeout' => 90,
+        'timeout' => 180,
         // ignore_errors: тело и статус ошибки hbd (429, модель недоступна...)
         // пробрасываются клиенту, а не превращаются в «AI server unreachable»
         'ignore_errors' => true,
@@ -267,11 +286,12 @@ if (isset($_GET['ai_explain_events'])) {
 
 // AI: SysAdmin Copilot чат с Tool Calling
 if (isset($_GET['ai_chat'])) {
+    @set_time_limit(180);
     $body = file_get_contents('php://input');
     header('Content-Type: application/json');
     $ctx = stream_context_create(['http' => [
         'method' => 'POST',
-        'timeout' => 120,
+        'timeout' => 180,
         'ignore_errors' => true,
         'header' => "Content-Type: application/json\r\nContent-Length: " . strlen($body),
         'content' => $body,
@@ -490,6 +510,13 @@ if (isset($bports) && isset($results)) {
 
 $staleCount = 0;
 foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATEST_NAME) { $staleCount++; } }
+
+$rejHosts = [];
+$rawRej = @file_get_contents('http://127.0.0.1:8897/api/rejected-hosts');
+if ($rawRej !== false) {
+    $rejList = @json_decode($rawRej, true);
+    if (is_array($rejList)) { $rejHosts = $rejList; }
+}
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -676,6 +703,17 @@ function filterRows(q) {
 </div>
 
 <div id="tab-machines">
+<?php if (!empty($rejHosts)): ?>
+  <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin:0 0 16px;color:#991b1b;font-size:13px;display:flex;flex-wrap:wrap;align-items:center;gap:10px">
+    <span><b>⚠️ Попытка подключения неразрешённых хостов:</b></span>
+    <?php foreach ($rejHosts as $rh): ?>
+      <span style="display:inline-flex;align-items:center;gap:8px;background:#fee2e2;border:1px solid #fecaca;padding:4px 10px;border-radius:6px">
+        <code><?= htmlspecialchars($rh['host']) ?></code> <span style="font-size:11px;color:#6b7280"><?= htmlspecialchars($rh['time']) ?></span>
+        <a href="?allow_host=<?= urlencode($rh['host']) ?>" style="background:#dc2626;color:#fff;text-decoration:none;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">+ Разрешить</a>
+      </span>
+    <?php endforeach; ?>
+  </div>
+<?php endif; ?>
 <section class="cards">
   <div class="card"><div class="num g"><?= count($active) ?></div><div class="lbl">активных машин</div></div>
   <div class="card"><div class="num a"><?= $staleCount ?></div><div class="lbl">требуют обновления</div></div>

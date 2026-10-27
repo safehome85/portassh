@@ -8,6 +8,7 @@ import (
 	"html"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -541,16 +542,72 @@ func executeTool(name, argsJSON string) string {
 			return "ошибка чтения реестра: " + err.Error()
 		}
 		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-		var validLines []string
+		type mach struct {
+			host string
+			port string
+			t    string
+			role string
+			user string
+			osv  string
+			disk string
+			ram  string
+			upt  string
+			ver  string
+		}
+		latest := make(map[string]mach)
+		var order []string
 		for _, l := range lines {
-			if strings.TrimSpace(l) != "" {
-				validLines = append(validLines, l)
+			l = strings.TrimSpace(l)
+			if l == "" {
+				continue
 			}
+			f := strings.Fields(l)
+			if len(f) < 4 {
+				continue
+			}
+			key := f[0] + "|" + f[3]
+			m := mach{
+				host: f[0],
+				port: f[1],
+				t:    f[2],
+				role: f[3],
+			}
+			if len(f) > 4 && f[4] != "-" {
+				m.user = f[4]
+			}
+			if len(f) > 5 && f[5] != "-" {
+				m.osv = f[5]
+			}
+			if len(f) > 6 && f[6] != "-" {
+				m.disk = f[6] + " GB"
+			}
+			if len(f) > 7 && f[7] != "-" {
+				m.ram = f[7] + "%"
+			}
+			if len(f) > 8 && f[8] != "-" {
+				m.upt = f[8] + "d"
+			}
+			if len(f) > 9 && f[9] != "-" {
+				m.ver = "v" + f[9]
+			}
+			if _, exists := latest[key]; !exists {
+				order = append(order, key)
+			}
+			latest[key] = m
 		}
-		if len(validLines) > 20 {
-			validLines = validLines[len(validLines)-20:]
+		if len(latest) == 0 {
+			return "нет зарегистрированных активных машин"
 		}
-		return strings.Join(validLines, "\n")
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("%-16s | %-5s | %-5s | %-20s | %-10s | %-7s | %-5s | %-6s | %-6s | %s\n",
+			"HOST", "PORT", "ROLE", "USER", "OS", "DISK", "RAM", "UPTIME", "VER", "LAST_SEEN"))
+		b.WriteString(strings.Repeat("-", 100) + "\n")
+		for _, k := range order {
+			m := latest[k]
+			b.WriteString(fmt.Sprintf("%-16s | %-5s | %-5s | %-20s | %-10s | %-7s | %-5s | %-6s | %-6s | %s\n",
+				m.host, m.port, m.role, m.user, m.osv, m.disk, m.ram, m.upt, m.ver, m.t))
+		}
+		return b.String()
 
 	case "get_machine_info":
 		if port < 1024 {
@@ -732,20 +789,22 @@ func webSearch(q string) string {
 	return "Результаты поиска:\n" + sb.String()
 }
 
-// webFetch: скачать страницу по URL и вернуть текст без HTML-разметки. и вернуть текст без HTML-разметки.
+// webFetch: скачать страницу по URL и вернуть текст без HTML-разметки.
 func webFetch(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "неверный URL"
 	}
 	host := u.Hostname()
-	// SSRF-щит: только публичные адреса — loopback/локальные сети запрещены
-	if host == "localhost" || !strings.Contains(host, ".") ||
-		strings.HasPrefix(host, "127.") || strings.HasPrefix(host, "10.") ||
-		strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "169.254.") ||
-		strings.HasPrefix(host, "0.0.0.0") || host == "::1" ||
-		(strings.HasPrefix(host, "172.") && private172(host)) {
-		return "доступ к локальным адресам запрещён"
+	// SSRF-щит: резолвим DNS и проверяем все IP на loopback/private/link-local/unspecified
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return "ошибка разрешения имени хоста: " + host
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return "доступ к локальным/приватным адресам запрещён"
+		}
 	}
 	client := &http.Client{Timeout: 20 * time.Second}
 	req, err := http.NewRequest("GET", rawURL, nil)
@@ -767,15 +826,6 @@ func webFetch(rawURL string) string {
 		text = text[:6000] + "…"
 	}
 	return text
-}
-
-func private172(host string) bool {
-	parts := strings.Split(host, ".")
-	if len(parts) < 2 {
-		return false
-	}
-	n, err := strconv.Atoi(parts[1])
-	return err == nil && n >= 16 && n <= 31
 }
 
 // hrefParam: вытащить параметр из DDG-редиректа вида ...?uddg=<enc>&rut=...
