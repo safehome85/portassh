@@ -509,7 +509,7 @@ func main() {
 		log.Fatal(err)
 	}
 	keyPath := flag.String("key", "/home/portassh/portassh_client.key", "client key для exec на цели")
-	hostKey := flag.String("hostkey", "5.35.81.198 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFSMuHGj/PMRmzrq5bJNhkbRafhgzexXADhiECn8uKk2 portassh-host", "host key целей")
+	hostKey := flag.String("hostkey", "", "host key целей (known_hosts-строка, обязательно)")
 	flag.Parse()
 	if kb, err := os.ReadFile(*keyPath); err == nil {
 		if sg, err := ssh.ParsePrivateKey(kb); err == nil {

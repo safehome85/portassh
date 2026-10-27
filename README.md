@@ -36,9 +36,9 @@ ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new \
 ```
 
 Zero prompts: the client key (downloaded from the dashboard) authenticates both
-the relay jump and the target. The shared password `RtnM91jK.!` remains as a
-fallback for machines without the key. Zero config files on the target, no
-firewall prompts.
+the relay jump and the target. A shared password (baked at build time, shown on
+your dashboard) remains as a fallback for machines without the key. Zero config
+files on the target, no firewall prompts.
 
 ## How it works
 
@@ -47,8 +47,8 @@ firewall prompts.
 ┌─────────┐   ssh -J -C   ┌──────────────────────────┐  reverse tunnel   ┌────────────────────────┐
 │ browser ├─────wss──────►│ nginx (basic auth)       │◄────SSH session───┤ portassh.exe           │
 │ client  ├───ssh -J -C──►│  sshd :22                │                   │ • sshd  127.0.0.1:2222 │
-└─────────┘   direct-    │  hbd  127.0.0.1:8897 ────┼───heartbeat───────┤ • cmd.exe via ConPTY   │
-             tcpip       │  wsterm 127.0.0.1:8898───┼───ws bridge───────┤ • RDP :3389 forwarded  │
+└─────────┘   direct-    │  hbd  :8898 hb, :8897 api┼───heartbeat───────┤ • cmd.exe via ConPTY   │
+             tcpip       │  wsterm 127.0.0.1:8896───┼───ws bridge───────┤ • RDP :3389 forwarded  │
                          │  127.0.0.1:2200+ fwd     │                   └────────────────────────┘
                          └──────────────────────────┘
 ```

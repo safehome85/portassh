@@ -566,7 +566,7 @@ func callAICompletions(ctx context.Context, apiURL, apiKey string, req openAIReq
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	if strings.Contains(apiURL, "openrouter.ai") {
-		httpReq.Header.Set("HTTP-Referer", "https://itstandart.kz")
+		httpReq.Header.Set("HTTP-Referer", "https://example.com")
 		httpReq.Header.Set("X-Title", "portassh-ai")
 	}
 

@@ -9,7 +9,7 @@
  *
  * Секретный адрес — не публикуйте ссылку.
  */
-$PRIVATE     = '/home/user/web/itstandart.kz/private'; // каталог артефактов (реестр, сборки, ключ)
+$PRIVATE     = '/home/portassh/private'; // каталог артефактов (реестр, сборки, ключ)
 $REGISTRY    = is_readable('/home/portassh/online.txt') ? '/home/portassh/online.txt' : "$PRIVATE/portassh-online.txt";
 $bcmdSaved   = '';
 $broadcastHtml = '';
@@ -38,7 +38,13 @@ $LATEST_RAW  = trim((string) @file_get_contents("$PRIVATE/portassh-version.txt")
 $LATEST_VER  = preg_split('/\s+/', $LATEST_RAW)[0] ?? '';
 $LATEST_NAME = preg_split('/\s+/', $LATEST_RAW)[1] ?? '';
 $EXE         = "$PRIVATE/portassh.exe"; // сборка для скачивания (копируется cron'ом)
-$RELAY       = '5.35.81.198'; // IP/домен relay-сервера для колонки «Команда подключения»
+$RELAY       = 'YOUR_RELAY_IP';  // IP/домен relay-сервера для колонки «Команда подключения»
+$WSS_HOST    = 'YOUR_DOMAIN:8899'; // адрес моста wsterm (кнопка «Терминал»)
+$ZIP_PASS    = 'YOUR_ZIP_PASSWORD'; // пароль portassh.zip и резервный SSH-пароль
+
+// локальный конфиг живёт только на relay (вне репо, как baked.go для Go):
+// переопределяет $PRIVATE, $RELAY, $WSS_HOST, $ZIP_PASS реальными значениями
+if (is_file(__DIR__ . '/sshdash-local.php')) { require __DIR__ . '/sshdash-local.php'; }
 $ACTIVE_SECS = 180;           // heartbeat у exe раз в 60 с — запас ×3
 $MAX_AGE     = 7 * 86400;     // записи старше недели игнорируются вовсе
 
@@ -50,12 +56,31 @@ $SKEW = $sysNow - mktime((int)date('H'), (int)date('i'), 0); // смещение
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
 
+header('Content-Type: text/html; charset=utf-8');
+header('Cache-Control: no-store');
+
+// CSRF: basic-auth не защищает от чужих страниц — мутирующие действия
+// принимаются только POST'ом с токеном, совпадающим с cookie (SameSite=Lax)
+$CSRF = $_COOKIE['pa_csrf'] ?? '';
+if (!preg_match('/^[0-9a-f]{32}$/', $CSRF)) {
+    $CSRF = bin2hex(random_bytes(16));
+    setcookie('pa_csrf', $CSRF, ['expires' => 0, 'path' => '/', 'secure' => true, 'httponly' => true, 'samesite' => 'Lax']);
+}
+function csrf_guard(): void {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST'
+        || !hash_equals($_COOKIE['pa_csrf'] ?? '', (string) ($_POST['t'] ?? ($_SERVER['HTTP_X_CSRF'] ?? '')))) {
+        http_response_code(403);
+        exit('csrf');
+    }
+}
+
 // метки и заметки машин: JSON рядом с реестром, редактируется из интерфейса
 if (isset($_GET['setalias'])) {
-    $h = preg_replace('/[^A-Za-z0-9._-]/', '', (string) $_GET['setalias']);
+    csrf_guard();
+    $h = preg_replace('/[^A-Za-z0-9._-]/', '', (string) ($_REQUEST['setalias'] ?? ''));
     if ($h !== '') {
-        $name = mb_substr(trim((string) ($_GET['name'] ?? '')), 0, 60);
-        $note = mb_substr(trim((string) ($_GET['note'] ?? '')), 0, 200);
+        $name = mb_substr(trim((string) ($_REQUEST['name'] ?? '')), 0, 60);
+        $note = mb_substr(trim((string) ($_REQUEST['note'] ?? '')), 0, 200);
         $al = json_decode((string) @file_get_contents($ALIASES_F), true);
         if (!is_array($al)) { $al = []; }
         if ($name === '' && $note === '') {
@@ -76,8 +101,9 @@ if (!is_array($playbooks) || count($playbooks) === 0) {
     file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
 }
 if (isset($_GET['addpb'])) {
-    $n = mb_substr(trim((string) ($_GET['pbname'] ?? '')), 0, 80);
-    $c = trim((string) ($_GET['pbcmd'] ?? ''));
+    csrf_guard();
+    $n = mb_substr(trim((string) ($_REQUEST['pbname'] ?? '')), 0, 80);
+    $c = trim((string) ($_REQUEST['pbcmd'] ?? ''));
     if ($n !== '' && $c !== '') {
         $playbooks[] = ['n' => $n, 'c' => $c];
         file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
@@ -86,7 +112,8 @@ if (isset($_GET['addpb'])) {
     exit;
 }
 if (isset($_GET['delpb'])) {
-    $n = trim((string) ($_GET['pbname'] ?? ''));
+    csrf_guard();
+    $n = trim((string) ($_REQUEST['pbname'] ?? ''));
     $playbooks = array_values(array_filter($playbooks, fn($p) => ($p['n'] ?? '') !== $n));
     file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
     header('Location: /sshdash');
@@ -111,10 +138,11 @@ authentication level:i=0
 }
 
 // Массовый exec: параллельный опрос выбранных машин через их форвардинги
-if (isset($_GET['broadcast'])) {
+if (isset($_REQUEST['broadcast'])) {
+    csrf_guard();
     set_time_limit(120);
-        $bcmd = (string) ($_GET['bcmd'] ?? '');
-    $bports = array_values(array_filter(array_map('intval', explode(',', (string) ($_GET['bports'] ?? ''))),
+        $bcmd = (string) ($_REQUEST['bcmd'] ?? '');
+    $bports = array_values(array_filter(array_map('intval', explode(',', (string) ($_REQUEST['bports'] ?? ''))),
         fn($p) => $p >= 1024 && $p <= 65535));
     $bcmdSaved = $bcmd;
     if ($bcmd !== '' && $bports) {
@@ -146,8 +174,9 @@ if (isset($_GET['screen'])) {
     exit;
 }
 
-// Ввод на машине: клики и текст
+// Ввод на машине: клики и текст (только POST — это внедрение ввода)
 if (isset($_GET['input'])) {
+    csrf_guard();
     $p = (int) $_GET['input'];
     $line = (string) ($_GET['line'] ?? '');
     if ($p < 1024 || $line === '' || mb_strlen($line) > 4096) { http_response_code(404); exit; }
@@ -169,6 +198,7 @@ if (isset($_GET['ls'])) {
 
 // Файлы: загрузка НА машину (multipart, поле f) → Downloads
 if (isset($_GET['putfile'])) {
+    csrf_guard();
     $p = (int) $_GET['putfile'];
     if ($p < 1024 || !isset($_FILES['f']) || $_FILES['f']['error'] !== UPLOAD_ERR_OK) { http_response_code(400); exit('no file'); }
     $name = basename($_FILES['f']['name']);
@@ -248,6 +278,7 @@ if (isset($_GET['ai_chat'])) {
 
 // Питание: перезагрузка / выключение / блокировка
 if (isset($_GET['power'])) {
+    csrf_guard();
     $p = (int) $_GET['power'];
     $act = (string) ($_GET['act'] ?? '');
     $cmds = [
@@ -284,6 +315,7 @@ if (isset($_GET['svcs'])) {
 
 // Управление службой: start/stop/restart
 if (isset($_GET['svc'])) {
+    csrf_guard();
     $p = (int) $_GET['svc'];
     $act = preg_replace('/[^a-z]/', '', (string) ($_GET['act'] ?? ''));
     $name = preg_replace('/[^A-Za-z0-9._$-]/', '', (string) ($_GET['name'] ?? ''));
@@ -296,6 +328,7 @@ if (isset($_GET['svc'])) {
 
 // Снять задачу
 if (isset($_GET['killp'])) {
+    csrf_guard();
     $p = (int) $_GET['killp'];
     $pid = (int) ($_GET['pid'] ?? 0);
     if ($p < 1024 || $pid <= 0) { http_response_code(404); exit; }
@@ -337,7 +370,7 @@ if (isset($_GET['shadow'])) {
 @echo off
 echo Теневой сеанс: вы видите экран пользователя вместе с ним.
 echo Закрытие окна SSH или mstsc завершает просмотр.
-start "portassh-tunnel" /min ssh -C -L {$rdpRelay}:127.0.0.1:{$rdpRelay} support@5.35.81.198
+start "portassh-tunnel" /min ssh -C -L {$rdpRelay}:127.0.0.1:{$rdpRelay} support@$RELAY
 timeout /t 2 >nul
 mstsc /shadow:{$sid} /v:localhost:{$rdpRelay} /control
 BAT;
@@ -349,6 +382,7 @@ BAT;
 // принудительный update-check на клиентах: пишем таймстамп-флаг,
 // exe проверяет его при каждом heartbeat (раз в минуту)
 if (isset($_GET['force'])) {
+    csrf_guard();
     file_put_contents($PRIVATE . '/portassh-force.txt', (string) time());
     header('Location: /sshdash');
     exit;
@@ -431,7 +465,7 @@ foreach ($lines as $line) {
 }
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
-$bcmdSaved = isset($_GET['broadcast']) ? (string) ($_GET['bcmd'] ?? '') : '';
+$bcmdSaved = isset($_REQUEST['broadcast']) ? (string) ($_REQUEST['bcmd'] ?? '') : '';
 if (isset($bports) && isset($results)) {
     $hostByPort = [];
     foreach ($latest as $e) { $hostByPort[(int) $e['port']] = $e['host']; }
@@ -538,25 +572,36 @@ foreach ($active as $e) { if ($LATEST_NAME !== '' && ($e['ver'] ?? '') !== $LATE
 <div class="wrap">
 <script>const INV_ALL_PORTS = <?= json_encode(array_map(fn($e) => (int) $e['port'], array_values($active))) ?>;</script>
 <script>
+// CSRF: все мутирующие вызовы — только POST; токен добавляется в каждый fetch
+const CSRF = '<?= $CSRF ?>';
+const _fetch = window.fetch;
+window.fetch = (u, o) => {
+  o = o || {};
+  o.headers = Object.assign(new Headers(o.headers || {}), {'X-CSRF': CSRF});
+  return _fetch(u, o);
+};
+function postAct(params) {
+  const b = new URLSearchParams(params); b.set('t', CSRF);
+  return fetch('/sshdash', {method: 'POST', body: b}).then(() => location.reload());
+}
 function addPlaybook() {
   const n = prompt('Название сценария (в меню):');
   if (n === null || !n.trim()) return;
   const c = prompt('Команда (cmd):');
   if (c === null || !c.trim()) return;
-  location.href = '/sshdash?addpb=1&pbname=' + encodeURIComponent(n.trim()) + '&pbcmd=' + encodeURIComponent(c.trim());
+  postAct({addpb: 1, pbname: n.trim(), pbcmd: c.trim()});
 }
 function delPlaybook() {
   const n = prompt('Название сценария для удаления:');
   if (n === null || !n.trim()) return;
-  location.href = '/sshdash?delpb=1&pbname=' + encodeURIComponent(n.trim());
+  postAct({delpb: 1, pbname: n.trim()});
 }
 function editAlias(host, cur, note) {
   const n = prompt('Имя машины (оставить пустым = удалить метку):', cur || '');
   if (n === null) return;
   const t = prompt('Заметка (необязательно):', note || '');
   if (t === null) return;
-  location.href = '/sshdash?setalias=' + encodeURIComponent(host)
-    + '&name=' + encodeURIComponent(n) + '&note=' + encodeURIComponent(t);
+  postAct({setalias: host, name: n, note: t});
 }
 function copyCmd(text, el) {
   navigator.clipboard.writeText(text).then(() => {
@@ -615,7 +660,7 @@ function filterRows(q) {
     <a class="btn" href="?dl=zip">⬇ .zip</a>
     <a class="btn" href="?dl=bin">⬇ .bin</a>
     <a class="btn" href="?dl=key">🔑 Ключ</a>
-    <a class="btn amber" href="?force=1" title="клиенты проверят обновление в течение минуты">⟳ Обновить клиентов</a>
+    <a class="btn amber" href="#" onclick="postAct({force:1});return false" title="клиенты проверят обновление в течение минуты">⟳ Обновить клиентов</a>
   </div>
 </header>
 
@@ -640,7 +685,8 @@ function filterRows(q) {
       <button class="btn" id="probbtn" onclick="toggleProblems()" style="display:none">👁 Только с проблемами</button>
     </div>
   </div>
-  <form method="get" action="/sshdash">
+  <form method="post" action="/sshdash">
+  <input type="hidden" name="t" value="<?= $CSRF ?>">
   <table>
   <tr><th style="width:34px"><input type="checkbox" onchange="document.querySelectorAll('input[name=sel[]]').forEach(c=>c.checked=this.checked)"></th><th>Машина</th><th>Роль</th><th>Порт</th><th>Действия</th><th>Heartbeat</th></tr>
   <?php
@@ -678,7 +724,7 @@ function filterRows(q) {
       $editBtn = '<a href="#" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
                . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
                . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false" title="метка/заметка">✏️</a>';
-      $btnHtml = '<a class="btn sm primary" href="https://itstandart.kz:8899/wsterm?port=' . (int) $e['port'] . '" target="_blank">🖥 Терминал</a>'
+      $btnHtml = '<a class="btn sm primary" href="https://' . $WSS_HOST . '/wsterm?port=' . (int) $e['port'] . '" target="_blank">🖥 Терминал</a>'
                . ' <a class="btn sm sky" href="?rdp=' . (int) $e['port'] . '" title="скачать .rdp">🖥️ RDP</a>'
                . ' <a class="btn sm" href="#" onclick="openProcs(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="диспетчер задач">📊 Процессы</a>'
                . ' <a class="btn sm" href="?shadow=' . (int) $e['port'] . '" title="совместный экран">👥 Тень</a>'
@@ -834,7 +880,7 @@ foreach ($invPorts as $p => $inv) {
 
 <h2>Установить на машину (Windows)</h2>
 <ol>
-<li>Нажми «⬇ .zip» вверху. Распакуй архив — пароль: <span class="pw">RtnM91jK.!</span></li>
+<li>Нажми «⬇ .zip» вверху. Распакуй архив — пароль: <span class="pw"><?= htmlspecialchars($ZIP_PASS) ?></span></li>
 <li>Запусти <span class="cmd">portassh.exe</span> двойным кликом. Окна нет — так и надо,
 программа работает в фоне.</li>
 </ol>
@@ -877,7 +923,7 @@ foreach ($invPorts as $p => $inv) {
 
 <h2>Пароль (резерв)</h2>
 <p>Если ключа нет — при подключении пароль спросят два раза (relay и машина),
-оба раза один и тот же: <span class="pw">RtnM91jK.!</span></p>
+оба раза один и тот же: <span class="pw"><?= htmlspecialchars($ZIP_PASS) ?></span></p>
 
 <h2>Управление машиной из таблицы</h2>
 <table class="pwtab">
@@ -910,7 +956,7 @@ foreach ($invPorts as $p => $inv) {
 Выключен? По SSH в админском сеансе:
 <span class="cmd">reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f &amp;&amp; netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=tcp localport=3389</span></li>
 <li>Построй туннель: порт машины + 10000. Для порта 2200:
-<span class="cmd">ssh -C -L 12200:127.0.0.1:12200 support@5.35.81.198</span></li>
+<span class="cmd">ssh -C -L 12200:127.0.0.1:12200 support@<?= htmlspecialchars($RELAY) ?></span></li>
 <li>Скачай «🖥️ RDP» и открой файл — адрес уже вписан (localhost:12200).</li>
 </ol>
 
@@ -1024,7 +1070,7 @@ document.querySelectorAll('.pmi').forEach(el => {
     const q = { reboot: 'Перезагрузить', shutdown: 'Выключить', lock: 'Заблокировать экран' }[act];
     if (!confirm(q + ' машину «' + pwrHost + '»?')) return;
     document.getElementById('powermenu').style.display = 'none';
-    fetch('?power=' + pwrPort + '&act=' + act).then(r => r.json()).then(j => {
+    fetch('?power=' + pwrPort + '&act=' + act, {method: 'POST'}).then(r => r.json()).then(j => {
       const r0 = j[String(pwrPort)] || {};
       alert('Команда отправлена (код ' + (r0.code ?? '?') + ')');
     }).catch(() => alert('ошибка отправки'));
@@ -1113,7 +1159,7 @@ function scrCoords(e) {
   return x + ' ' + y;
 }
 function scrSendLine(line) {
-  fetch('?input=' + scrPort + '&line=' + encodeURIComponent(line));
+  fetch('?input=' + scrPort + '&line=' + encodeURIComponent(line), {method: 'POST'});
 }
 function scrClick(e, dbl) { scrSendLine((dbl ? 'dbl ' : 'click ') + scrCoords(e)); }
 function scrPress(e) {
@@ -1201,7 +1247,7 @@ function pmRender() {
   if (!body.children.length) body.innerHTML = '<div style="color:#64748b;padding:10px">ничего не найдено</div>';
 }
 function pmKill(pid) {
-  fetch('?killp=' + pmPort + '&pid=' + pid).then(() => pmLoad());
+  fetch('?killp=' + pmPort + '&pid=' + pid, {method: 'POST'}).then(() => pmLoad());
 }
 
 function openSvc(port, host) {
@@ -1250,7 +1296,7 @@ function svRender() {
   if (!body.children.length) body.innerHTML = '<div style="color:#64748b;padding:10px">ничего не найдено</div>';
 }
 function svcAct(act, name) {
-  fetch('?svc=' + svcPort + '&act=' + act + '&name=' + encodeURIComponent(name))
+  fetch('?svc=' + svcPort + '&act=' + act + '&name=' + encodeURIComponent(name), {method: 'POST'})
     .then(r => r.json()).then(() => svLoad());
 }
 

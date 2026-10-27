@@ -8,7 +8,8 @@ C="$SSH_ORIGINAL_COMMAND"
 case "$C" in
   "cat /home/portassh/updates/version.txt"|\
   "cat /home/portassh/updates/portassh.exe"|\
-  "cat /home/user/web/itstandart.kz/private/portassh-force.txt")
+  "cat /home/portassh/force-flag.txt"|\
+  "date +%s")
     exec sh -c "$C"
     ;;
 esac

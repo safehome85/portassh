@@ -27,3 +27,8 @@ portassh_client_key*
 contrib/hbd/hbd
 contrib/wsterm/wsterm
 contrib/hbd/hbd.linux_amd64
+
+# локальный конфиг дашборда с реальными значениями (как baked.go, вне репо)
+sshdash-local.php
+portassh
+contrib/wsterm/wsterm.linux_amd64
