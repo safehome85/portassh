@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -449,6 +452,34 @@ func getSysAdminTools() []toolDef {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: toolDefFunc{
+				Name:        "web_search",
+				Description: "Поиск в интернете (DuckDuckGo) — для кодов ошибок Windows, KB-статей, драйверов, известной документации",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{"type": "string", "description": "Поисковый запрос (лучше на английском, например Windows error 0x80070005 fix)"},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: toolDefFunc{
+				Name:        "web_fetch",
+				Description: "Прочитать веб-страницу по URL и получить её текст (без разметки) — для изучения найденной статьи/инструкции",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"url": map[string]interface{}{"type": "string", "description": "Полный URL страницы (https://...)"},
+					},
+					"required": []string{"url"},
+				},
+			},
+		},
 	}
 }
 
@@ -555,9 +586,135 @@ func executeTool(name, argsJSON string) string {
 		code, out := execOnTarget(port, cmd)
 		return fmt.Sprintf("код: %d, вывод:\n%s", code, out)
 
+	case "web_search":
+		q, _ := args["query"].(string)
+		if strings.TrimSpace(q) == "" {
+			return "пустой запрос"
+		}
+		return webSearch(q)
+
+	case "web_fetch":
+		u, _ := args["url"].(string)
+		if strings.TrimSpace(u) == "" {
+			return "не указан URL"
+		}
+		return webFetch(u)
+
 	default:
 		return "неизвестный инструмент: " + name
 	}
+}
+
+var (
+	reScript  = regexp.MustCompile(`(?s)<script[^>]*>.*?</script>`)
+	reStyle   = regexp.MustCompile(`(?s)<style[^>]*>.*?</style>`)
+	reTag     = regexp.MustCompile(`<[^>]+>`)
+	reSpaces  = regexp.MustCompile(`\s+`)
+	reDDGLink = regexp.MustCompile(`(?s)class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
+	reDDGSnip = regexp.MustCompile(`(?s)class="result__snippet"[^>]*>(.*?)</a>`)
+)
+
+// webSearch: поиск через DuckDuckGo HTML (без API-ключей), топ-6 результатов.
+func webSearch(q string) string {
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("GET", "https://html.duckduckgo.com/html/?q="+url.QueryEscape(q), nil)
+	if err != nil {
+		return "ошибка поиска: " + err.Error()
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "ошибка поиска: " + err.Error()
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+
+	titles := reDDGLink.FindAllStringSubmatch(string(body), -1)
+	snips := reDDGSnip.FindAllStringSubmatch(string(body), -1)
+	strip := func(s string) string {
+		return strings.TrimSpace(reTag.ReplaceAllString(html.UnescapeString(s), ""))
+	}
+	var sb strings.Builder
+	for i, m := range titles {
+		if i >= 6 {
+			break
+		}
+		href := m[1]
+		if u, e := url.QueryUnescape(hrefParam(href, "uddg")); e == nil && u != "" {
+			href = u
+		}
+		snip := ""
+		if i < len(snips) {
+			snip = strip(snips[i][1])
+		}
+		if len(snip) > 300 {
+			snip = snip[:300] + "…"
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n   %s\n", i+1, strip(m[2]), href, snip))
+	}
+	if sb.Len() == 0 {
+		return "поиск не дал результатов"
+	}
+	return "Результаты поиска:\n" + sb.String()
+}
+
+// webFetch: скачать страницу по URL и вернуть текст без HTML-разметки. и вернуть текст без HTML-разметки.
+func webFetch(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "неверный URL"
+	}
+	host := u.Hostname()
+	// SSRF-щит: только публичные адреса — loopback/локальные сети запрещены
+	if host == "localhost" || !strings.Contains(host, ".") ||
+		strings.HasPrefix(host, "127.") || strings.HasPrefix(host, "10.") ||
+		strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "169.254.") ||
+		strings.HasPrefix(host, "0.0.0.0") || host == "::1" ||
+		(strings.HasPrefix(host, "172.") && private172(host)) {
+		return "доступ к локальным адресам запрещён"
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return "ошибка: " + err.Error()
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "ошибка загрузки: " + err.Error()
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	text := reScript.ReplaceAllString(string(body), " ")
+	text = reStyle.ReplaceAllString(text, " ")
+	text = reTag.ReplaceAllString(text, " ")
+	text = reSpaces.ReplaceAllString(html.UnescapeString(text), " ")
+	if len(text) > 6000 {
+		text = text[:6000] + "…"
+	}
+	return text
+}
+
+func private172(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	n, err := strconv.Atoi(parts[1])
+	return err == nil && n >= 16 && n <= 31
+}
+
+// hrefParam: вытащить параметр из DDG-редиректа вида ...?uddg=<enc>&rut=...
+func hrefParam(href, key string) string {
+	i := strings.Index(href, key+"=")
+	if i < 0 {
+		return ""
+	}
+	v := href[i+len(key)+1:]
+	if j := strings.Index(v, "&"); j >= 0 {
+		v = v[:j]
+	}
+	return v
 }
 
 func resolveProvider(provider, model, customKey string) (apiKey, apiURL, resolvedModel string) {
