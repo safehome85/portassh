@@ -14,6 +14,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -69,7 +70,98 @@ func fallbackModel(provider string) string {
 	if provider == "google" {
 		return "gemini-flash-latest"
 	}
-	return "openrouter/auto"
+	// openrouter/free: роутер ТОЛЬКО бесплатных маршрутов — auto может
+	// выбрать платную модель и выжечь бюджет
+	return "openrouter/free"
+}
+
+// --- умная ротация бесплатных моделей ---
+// Сложные задачи (анализ, диагностика, длинные диалоги) → умные модели;
+// простые («покажи статус») → быстрые и лёгкие. Счётчики выравнивают
+// нагрузку внутри уровня, чтобы дневной лимит одной модели не выгорал.
+var (
+	usageMu    sync.Mutex
+	usageDay   = time.Now().YearDay()
+	usageCount = map[string]int{}
+)
+
+var smartFreeModels = []string{
+	"google/gemma-4-31b-it:free",
+	"nvidia/nemotron-3-super-120b-a12b:free",
+	"thinkingmachines/inkling:free",
+}
+
+var fastFreeModels = []string{
+	"google/gemma-4-26b-a4b-it:free",
+	"nvidia/nemotron-3.5-lightning:free",
+	"liquid/lfm-2.5-2.6b:free",
+}
+
+func rotate(models []string) string {
+	usageMu.Lock()
+	defer usageMu.Unlock()
+	if d := time.Now().YearDay(); d != usageDay {
+		usageDay, usageCount = d, map[string]int{}
+	}
+	best, bestN := models[0], 1<<30
+	for _, m := range models {
+		if usageCount[m] < bestN {
+			best, bestN = m, usageCount[m]
+		}
+	}
+	usageCount[best]++
+	return best
+}
+
+func autoCandidates(msgs []chatMessage) []string {
+	text := ""
+	if len(msgs) > 0 {
+		text = strings.ToLower(msgs[len(msgs)-1].Content)
+	}
+	score := 0
+	if len(text) > 300 {
+		score += 2
+	}
+	if len(msgs) >= 4 {
+		score++ // длинный диалог — контекст важнее скорости
+	}
+	for _, kw := range []string{"проанализир", "найди причину", "почему", "диагност", "сравни", "исправ", "разбери", "исслед"} {
+		if strings.Contains(text, kw) {
+			score += 2
+			break
+		}
+	}
+	first, second := smartFreeModels, fastFreeModels
+	if score < 2 {
+		first, second = fastFreeModels, smartFreeModels
+	}
+	cachedFreeModelsMu.RLock()
+	cat := map[string]bool{}
+	for _, m := range cachedFreeModelsOpenRouter {
+		cat[m] = true
+	}
+	cachedFreeModelsMu.RUnlock()
+	usageMu.Lock()
+	defer usageMu.Unlock()
+	var cands []string
+	for _, grp := range [][]string{first, second} {
+		live := grp
+		if len(cat) > 0 {
+			live = nil
+			for _, m := range grp {
+				if cat[m] {
+					live = append(live, m)
+				}
+			}
+			if len(live) == 0 {
+				live = grp // каталог не подтвердил ни одной — пробуем как есть
+			}
+		}
+		sorted := append([]string(nil), live...)
+		sort.Slice(sorted, func(i, j int) bool { return usageCount[sorted[i]] < usageCount[sorted[j]] })
+		cands = append(cands, sorted...)
+	}
+	return append(cands, "openrouter/free")
 }
 
 var (
@@ -227,6 +319,11 @@ func explainEventsHandler(w http.ResponseWriter, r *http.Request) {
 	if eventsText == "" {
 		aiErr(w, "no events to analyze", 400)
 		return
+	}
+
+	if (req.Provider == "" || strings.EqualFold(req.Provider, "openrouter")) &&
+		(req.Model == "" || req.Model == "openrouter/auto" || req.Model == "openrouter/free") {
+		req.Model = rotate(smartFreeModels) // анализ журналов — всегда сложная задача
 	}
 
 	apiKey, apiURL, model := resolveProvider(req.Provider, req.Model, req.ApiKey)
@@ -920,6 +1017,14 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 		aiErr(w, "no messages", 400)
 		return
 	}
+	// авто-режим (пустая модель / openrouter-auto / free-router):
+	// умная ротация бесплатных моделей по сложности запроса
+	auto := req.Provider == "" || strings.EqualFold(req.Provider, "openrouter")
+	var cands []string
+	if auto && (req.Model == "" || req.Model == "openrouter/auto" || req.Model == "openrouter/free") {
+		cands = autoCandidates(req.Messages)
+		req.Model = cands[0]
+	}
 
 	apiKey, apiURL, model := resolveProvider(req.Provider, req.Model, req.ApiKey)
 	if apiKey == "" {
@@ -956,7 +1061,7 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var logs []toolExecLog
-	fellback := false
+	ci := 0 // индекс текущего кандидата ротации моделей
 
 	// Tool Calling Loop (до 5 итераций)
 	for iter := 0; iter < 5; iter++ {
@@ -968,16 +1073,13 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		aiResp, err := callAICompletions(r.Context(), apiURL, apiKey, payload, req.Provider)
-		if err != nil && !fellback {
-			// free-модели отваливаются на стороне OpenRouter (404, зависания >90s) —
-			// повторяем итерацию с дефолтной моделью, выбирающей рабочий маршрут сама
-			if fb := fallbackModel(req.Provider); fb != "" && fb != model {
-				log.Printf("ai: модель %s недоступна (%v) — фолбэк на %s", model, err, fb)
-				model = fb
-				payload.Model = fb
-				fellback = true
-				continue
-			}
+		if err != nil && len(cands) > 0 && ci+1 < len(cands) {
+			// free-модели отваливаются на стороне OpenRouter (404, 429, зависания) —
+			// берём следующего кандидата из списка ротации
+			ci++
+			log.Printf("ai: модель %s недоступна (%v) — пробую %s", model, err, cands[ci])
+			model = cands[ci]
+			continue
 		}
 		if err != nil {
 			log.Printf("ai: completion error iter=%d: %v", iter, err)

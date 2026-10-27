@@ -1417,7 +1417,7 @@ function evAIAnalyze() {
 // ---- AI SysAdmin Copilot ----
 const aiModelsMap = {
   openrouter: [
-    { id: 'openrouter/auto', name: 'OpenRouter Auto [Рекомендуется]' },
+    { id: 'openrouter/auto', name: '🤖 Авто (умная ротация free) [Рекомендуется]' },
     { id: 'openrouter/free', name: 'Free Models Router [Auto Free]' },
     { id: 'nvidia/nemotron-3.5-lightning:free', name: 'Nemotron 3.5 Lightning [Free]' },
     { id: 'recursive/flint-v1.0:free', name: 'Flint v1.0 [Free]' },
@@ -1450,7 +1450,7 @@ function aiFetchConfig() {
       if (cfg && cfg.openrouter_models && cfg.openrouter_models.length) {
         aiModelsMap.openrouter = cfg.openrouter_models.map(id => {
           let name = id;
-          if (id === 'openrouter/auto') name = 'OpenRouter Auto [Рекомендуется]';
+          if (id === 'openrouter/auto') name = '🤖 Авто (умная ротация free) [Рекомендуется]';
           else if (id === 'openrouter/free') name = 'Free Models Router [Auto Free]';
           else name = id.replace(':free', ' [Free]');
           return { id: id, name: name };
