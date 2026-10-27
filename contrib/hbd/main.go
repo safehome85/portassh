@@ -43,10 +43,28 @@ var (
 	inputQ  = map[int][]string{}
 )
 
+// allowlist: /home/portassh/allowed-hosts.txt — по одному хостнейму на строку.
+// Пустой/отсутствующий файл = принимать всех (обратная совместимость).
+// Утечка exe с зашитым туннельным ключом перестаёт наполнять реестр чужими машинами.
+var allowedHosts = func() map[string]bool {
+	m := map[string]bool{}
+	if b, err := os.ReadFile("/home/portassh/allowed-hosts.txt"); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if h := strings.TrimSpace(l); h != "" {
+				m[h] = true
+			}
+		}
+	}
+	return m
+}()
+
 func valid(line string) bool {
 	f := strings.Fields(line)
 	// поля: host port time role [user os disk ram upt ver ...]
 	if len(f) < 4 || len(f) > 12 {
+		return false
+	}
+	if len(allowedHosts) > 0 && !allowedHosts[f[0]] {
 		return false
 	}
 	for i, x := range f {

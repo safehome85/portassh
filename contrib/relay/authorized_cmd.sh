@@ -22,7 +22,12 @@ case "$C" in
     set -- $line
     [ $# -ge 4 ] || { echo "portassh: bad registry line" >&2; exit 111; }
     case "$4" in
-      user|admin) printf '%s\n' "$line" >> "$REG"; exit 0 ;;
+      user|admin)
+        # allowlist хостов (как в hbd): утечка exe не наполняет реестр чужими машинами
+        if [ -s /home/portassh/allowed-hosts.txt ] && ! grep -qxF "${line%% *}" /home/portassh/allowed-hosts.txt; then
+          exit 0
+        fi
+        printf '%s\n' "$line" >> "$REG"; exit 0 ;;
       *) echo "portassh: bad role" >&2; exit 111 ;;
     esac
     ;;
