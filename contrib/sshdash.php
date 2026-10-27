@@ -253,6 +253,9 @@ if (isset($_GET['ai_explain_events'])) {
     $ctx = stream_context_create(['http' => [
         'method' => 'POST',
         'timeout' => 90,
+        // ignore_errors: тело и статус ошибки hbd (429, модель недоступна...)
+        // пробрасываются клиенту, а не превращаются в «AI server unreachable»
+        'ignore_errors' => true,
         'header' => "Content-Type: application/json\r\nContent-Length: " . strlen($body),
         'content' => $body,
     ]]);
@@ -269,6 +272,7 @@ if (isset($_GET['ai_chat'])) {
     $ctx = stream_context_create(['http' => [
         'method' => 'POST',
         'timeout' => 120,
+        'ignore_errors' => true,
         'header' => "Content-Type: application/json\r\nContent-Length: " . strlen($body),
         'content' => $body,
     ]]);
