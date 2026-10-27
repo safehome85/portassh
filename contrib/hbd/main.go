@@ -45,7 +45,8 @@ var (
 
 func valid(line string) bool {
 	f := strings.Fields(line)
-	if len(f) < 4 || len(f) > 9 {
+	// поля: host port time role [user os disk ram upt ver ...]
+	if len(f) < 4 || len(f) > 12 {
 		return false
 	}
 	for i, x := range f {
@@ -53,7 +54,6 @@ func valid(line string) bool {
 			return false
 		}
 	}
-	// поля: host port time role [user os disk ram ver]
 	if _, ok := map[string]bool{"user": true, "admin": true}[f[3]]; !ok {
 		return false
 	}
