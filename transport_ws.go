@@ -5,7 +5,9 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"net"
+	"net/http"
 
 	"golang.org/x/net/websocket"
 )
@@ -17,6 +19,9 @@ func wsDial(wssAddr string) (net.Conn, error) {
 		return nil, err
 	}
 	cfg.TlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	// мост требует basic-auth (/tunnel за htpasswd, как дашборд)
+	cfg.Header = http.Header{"Authorization": {"Basic " + base64.StdEncoding.EncodeToString(
+		[]byte(defaultRelayUser + ":" + allowedClientPassword))}}
 	ws, err := websocket.DialConfig(cfg)
 	if err != nil {
 		return nil, err

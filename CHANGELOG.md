@@ -3,6 +3,31 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.69] — 2026-10-27
+
+Security hardening pass after a public-repo audit.
+
+### Security
+- Credential rotation: shared fallback password, dashboard basic-auth, zip
+  password and the relay `support` user (the old password was published in
+  the README); all infra identifiers (relay IP, hosting paths, domains)
+  moved out of the public tree into `baked.go` / `sshdash-local.php`
+- self-update now verifies the sha256 of the downloaded exe against
+  `version.txt` before executing it
+- Dashboard mutating actions (broadcast, power, services, process kill,
+  screen input, playbooks, aliases, force-update) require POST + CSRF token
+- wsterm `/tunnel` (WSS fallback transport) is behind basic auth; the client
+  sends the credentials itself
+
+### Fixed
+- Build: `relayTimeOff` declared inside a `const` block broke the build
+- obfuscate.py: the last entry of a `var` block (the password) was silently
+  left in plaintext during builds
+- relayLoop: duplicated error-log / resume-hint block
+- wsterm default listen port collided with hbd's heartbeat port (8898)
+- portassh.log is rotated to `.1` after 8 MB instead of growing forever
+- the compiled macOS binary is no longer tracked by git
+
 ## [1.28.0] — 2026-10-26
 
 The dashboard becomes the primary control plane; the exe gains deep

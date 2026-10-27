@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	listen   = flag.String("listen", "127.0.0.1:8898", "listen address")
+	listen   = flag.String("listen", "127.0.0.1:8896", "listen address (8897 занят HTTP API hbd, 8898 — его heartbeat)")
 	keyPath  = flag.String("key", "", "client private key accepted by targets")
 	hostKey  = flag.String("hostkey", "", "target embedded server host key line")
 	tlsCert  = flag.String("cert", "", "TLS certificate (включает HTTPS на этом же порту)")
@@ -218,8 +218,9 @@ func main() {
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 	}
 	http.Handle("/ws", basicAuth(wsServer.ServeHTTP))
-	// SSH-туннель: WS ↔ локальный sshd (резервный транспорт portassh)
-	http.Handle("/tunnel", websocket.Server{
+	// SSH-туннель: WS ↔ локальный sshd (резервный транспорт portassh).
+	// Под basic-auth, как /ws: клиент шлёт Authorization сама (transport_ws.go).
+	http.Handle("/tunnel", basicAuth(websocket.Server{
 		Handler: websocket.Handler(func(ws *websocket.Conn) {
 			up, err := net.DialTimeout("tcp", "127.0.0.1:22", 5*time.Second)
 			if err != nil {
@@ -233,7 +234,7 @@ func main() {
 			<-done
 		}),
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
-	})
+	}.ServeHTTP))
 	log.Printf("wsterm listening on %s", *listen)
 	if *tlsCert != "" {
 		log.Fatal(http.ListenAndServeTLS(*listen, *tlsCert, *tlsKey, nil))
