@@ -826,7 +826,7 @@ func callAICompletions(ctx context.Context, apiURL, apiKey string, req openAIReq
 		httpReq.Header.Set("X-Title", "portassh-ai")
 	}
 
-	client := &http.Client{Timeout: 90 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -906,6 +906,7 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var logs []toolExecLog
+	fellback := false
 
 	// Tool Calling Loop (до 5 итераций)
 	for iter := 0; iter < 5; iter++ {
@@ -917,13 +918,14 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		aiResp, err := callAICompletions(r.Context(), apiURL, apiKey, payload, req.Provider)
-		if err != nil && iter == 0 {
-			// free-модели провайдеров отваливаются на стороне OpenRouter (404 Not Found) —
+		if err != nil && !fellback {
+			// free-модели отваливаются на стороне OpenRouter (404, зависания >90s) —
 			// повторяем итерацию с дефолтной моделью, выбирающей рабочий маршрут сама
 			if fb := fallbackModel(req.Provider); fb != "" && fb != model {
 				log.Printf("ai: модель %s недоступна (%v) — фолбэк на %s", model, err, fb)
 				model = fb
 				payload.Model = fb
+				fellback = true
 				continue
 			}
 		}
