@@ -10,7 +10,7 @@
  * Секретный адрес — не публикуйте ссылку.
  */
 $PRIVATE     = '/home/user/web/itstandart.kz/private'; // каталог артефактов (реестр, сборки, ключ)
-$REGISTRY    = "$PRIVATE/portassh-online.txt";
+$REGISTRY    = is_readable('/home/portassh/online.txt') ? '/home/portassh/online.txt' : "$PRIVATE/portassh-online.txt";
 $bcmdSaved   = '';
 $broadcastHtml = '';
 $ALIASES_F   = "$PRIVATE/portassh-aliases.json";
@@ -627,7 +627,7 @@ function filterRows(q) {
 <div id="tab-machines">
 <section class="cards">
   <div class="card"><div class="num g"><?= count($active) ?></div><div class="lbl">активных машин</div></div>
-  <div class="card"><div class="num a"><?= $staleActive ?></div><div class="lbl">требуют обновления</div></div>
+  <div class="card"><div class="num a"><?= $staleCount ?></div><div class="lbl">требуют обновления</div></div>
   <div class="card"><div class="num i"><?= count(array_filter($active, fn($e) => $e['role'] === 'admin')) ?></div><div class="lbl">админских сессий</div></div>
   <div class="card"><div class="num"><?= count($aliases) ?></div><div class="lbl">меток в справочнике</div></div>
 </section>
