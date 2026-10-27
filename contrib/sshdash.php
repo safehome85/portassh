@@ -10,6 +10,15 @@
  * Секретный адрес — не публикуйте ссылку.
  */
 $PRIVATE     = '/home/portassh/private'; // каталог артефактов (реестр, сборки, ключ)
+$RELAY       = 'YOUR_RELAY_IP';  // IP/домен relay-сервера для колонки «Команда подключения»
+$WSS_HOST    = 'YOUR_DOMAIN:8899'; // адрес моста wsterm (кнопка «Терминал»)
+$ZIP_PASS    = 'YOUR_ZIP_PASSWORD'; // пароль portassh.zip и резервный SSH-пароль
+
+// локальный конфиг живёт только на relay (вне репо, как baked.go для Go):
+// переопределяет $PRIVATE, $RELAY, $WSS_HOST, $ZIP_PASS реальными значениями.
+// ВАЖНО: подключать ДО производных путей ниже ($REGISTRY, $ALIASES_F, ...)
+if (is_file(__DIR__ . '/sshdash-local.php')) { require __DIR__ . '/sshdash-local.php'; }
+
 $REGISTRY    = is_readable('/home/portassh/online.txt') ? '/home/portassh/online.txt' : "$PRIVATE/portassh-online.txt";
 $bcmdSaved   = '';
 $broadcastHtml = '';
@@ -38,13 +47,6 @@ $LATEST_RAW  = trim((string) @file_get_contents("$PRIVATE/portassh-version.txt")
 $LATEST_VER  = preg_split('/\s+/', $LATEST_RAW)[0] ?? '';
 $LATEST_NAME = preg_split('/\s+/', $LATEST_RAW)[1] ?? '';
 $EXE         = "$PRIVATE/portassh.exe"; // сборка для скачивания (копируется cron'ом)
-$RELAY       = 'YOUR_RELAY_IP';  // IP/домен relay-сервера для колонки «Команда подключения»
-$WSS_HOST    = 'YOUR_DOMAIN:8899'; // адрес моста wsterm (кнопка «Терминал»)
-$ZIP_PASS    = 'YOUR_ZIP_PASSWORD'; // пароль portassh.zip и резервный SSH-пароль
-
-// локальный конфиг живёт только на relay (вне репо, как baked.go для Go):
-// переопределяет $PRIVATE, $RELAY, $WSS_HOST, $ZIP_PASS реальными значениями
-if (is_file(__DIR__ . '/sshdash-local.php')) { require __DIR__ . '/sshdash-local.php'; }
 $ACTIVE_SECS = 180;           // heartbeat у exe раз в 60 с — запас ×3
 $MAX_AGE     = 7 * 86400;     // записи старше недели игнорируются вовсе
 
