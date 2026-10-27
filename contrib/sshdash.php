@@ -1531,7 +1531,7 @@ function aiAppendMsg(role, html, toolsUsed) {
   }
 
   const bubble = document.createElement('div');
-  bubble.style.cssText = 'display:inline-block;padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.45;text-align:left;'
+  bubble.style.cssText = 'display:inline-block;max-width:100%;padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.45;text-align:left;overflow-wrap:anywhere;word-break:break-word;'
     + (role === 'user' ? 'background:#4f46e5;color:#fff;border-bottom-right-radius:2px' : 'background:#f1f5f9;color:#0f172a;border-bottom-left-radius:2px;border:1px solid #e2e8f0');
   bubble.innerHTML = toolsHtml + html;
   div.appendChild(bubble);
@@ -1602,8 +1602,23 @@ function aiQuickChip(promptText) {
 
 function renderMarkdown(md) {
   if (!md) return '';
+  md = md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // markdown-таблицы → HTML: фиксированная ширина, перенос внутри ячеек
+  md = md.replace(/(^\|.+\|\s*$\n?)+/gm, block => {
+    const rows = block.trim().split('\n').map(r => r.trim()).filter(r => r.startsWith('|'));
+    if (rows.length < 2) return block;
+    const cells = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    let html = '<table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;margin:6px 0">';
+    rows.forEach((r, i) => {
+      const cs = cells(r);
+      if (i > 0 && cs.every(c => /^:?-{2,}:?$/.test(c) || c === '')) return; // сепаратор |---|
+      const tag = i === 0 ? 'th' : 'td';
+      html += '<tr>' + cs.map(c => '<' + tag + ' style="border:1px solid #cbd5e1;padding:4px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word">' + c + '</' + tag + '>').join('') + '</tr>';
+    });
+    return html + '</table>';
+  });
   return md
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/```([\s\S]*?)```/g, '<pre style="background:#0f172a;color:#f8fafc;padding:8px 10px;border-radius:6px;font-size:12px;overflow-x:auto;margin:6px 0"><code>$1</code></pre>')
     .replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;color:#e11d48;padding:2px 5px;border-radius:4px;font-size:12px">$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
@@ -1766,7 +1781,7 @@ window.addEventListener('DOMContentLoaded', () => {
     <select id="aimodel" onchange="aiModelChanged()" style="font-size:11.5px;padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;flex:1;min-width:0">
     </select>
   </div>
-  <div id="aimessages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;background:#fafafa">
+  <div id="aimessages" style="flex:1;overflow-y:auto;overflow-x:hidden;padding:12px;display:flex;flex-direction:column;background:#fafafa">
     <div style="font-size:12.5px;color:#64748b;background:#f1f5f9;border-radius:8px;padding:10px;margin-bottom:8px">
       👋 Привет! Я ваш AI-ассистент по флоту portassh. У меня есть доступ к процессам, службам, дискам, инвентарю и ошибкам журналов Windows. Спросите меня о состоянии машин!
     </div>
