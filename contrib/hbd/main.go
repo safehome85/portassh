@@ -496,7 +496,8 @@ func handle(c net.Conn) {
 	}
 }
 
-// compact: ротация online.txt — остаются последние compKeep строк.
+// compact: ротация online.txt — остаются последние compKeep строк,
+// причём только хосты из allowlist (утёкшие exe не оставляют следов).
 // Единственный писатель — hbd, поэтому rename безопасен.
 func compact() {
 	data, err := os.ReadFile(file)
@@ -506,6 +507,15 @@ func compact() {
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	if len(lines) > compKeep {
 		lines = lines[len(lines)-compKeep:]
+	}
+	if len(allowedHosts) > 0 {
+		kept := lines[:0]
+		for _, l := range lines {
+			if f := strings.Fields(l); len(f) > 0 && allowedHosts[f[0]] {
+				kept = append(kept, l)
+			}
+		}
+		lines = kept
 	}
 	tmp := file + ".tmp"
 	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
