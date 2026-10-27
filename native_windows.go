@@ -238,7 +238,8 @@ func queryEvents(s ssh.Session, args string) {
 			limit = n
 		}
 	}
-	cmd := exec.Command("wevtutil", "qe", channel, fmt.Sprintf("/c:%d", limit), "/rd:true", "/f:text", `*[System[(Level=1 or Level=2 or Level=3)]]`)
+	// /q: обязателен: позиционный XPath мыvtutil отбрасывает (exit 87)
+	cmd := exec.Command("wevtutil", "qe", channel, fmt.Sprintf("/c:%d", limit), "/rd:true", "/f:text", "/q:*[System[(Level=1 or Level=2 or Level=3)]]")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
