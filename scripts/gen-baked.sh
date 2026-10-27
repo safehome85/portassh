@@ -50,6 +50,10 @@ fi
 # password for connecting from machines without the baked client key
 CPASS=$(openssl rand -base64 15 | tr -d '/+=' | head -c 16)
 
+# fallback WSS transport and the dashboard force-update flag file on the relay
+WSS_ADDR="${WSS_ADDR:-$RELAY_HOST:8899}"
+FORCE_PATH="${FORCE_PATH:-/home/portassh/force-flag.txt}"
+
 cat > baked.go <<EOF
 package main
 
@@ -71,6 +75,12 @@ const (
 
 	// парольный вход с машин без ключа (менять можно в любой момент)
 	allowedClientPassword = "$CPASS"
+
+	// резервный WSS-транспорт (мост SSH-over-WebSocket на relay)
+	defaultWssAddr = "$WSS_ADDR"
+
+	// force-флаг update-check, который пишет дашборд (unix-таймстамп)
+	forceFlagPath = "$FORCE_PATH"
 )
 
 // клиентские ключи, принимаемые встроенным сервером (слайс не может быть const)

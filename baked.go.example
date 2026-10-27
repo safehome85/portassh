@@ -39,4 +39,11 @@ const (
 	// password auth for connecting from machines without this key
 	// (empty = password auth disabled). Generate: openssl rand -base64 15
 	allowedClientPassword = "YOUR_CLIENT_PASSWORD"
+
+	// fallback WSS transport (SSH over WebSocket bridge on the relay)
+	defaultWssAddr = "YOUR_RELAY_HOST:8899"
+
+	// dashboard-written unix-timestamp flag: clients check it on every
+	// heartbeat and force an update-check when it grows (see checkForceUpdate)
+	forceFlagPath = "/home/portassh/force-flag.txt"
 )

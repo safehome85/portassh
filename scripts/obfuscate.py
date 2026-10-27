@@ -16,7 +16,8 @@ import re
 import sys
 
 TARGETS = ["defaultRelay", "relayPrivKeyB64", "relayHostKeyLine",
-           "serverHostKeyB64", "allowedClientPassword"]
+           "serverHostKeyB64", "allowedClientPassword",
+           "defaultWssAddr", "forceFlagPath"]
 
 
 def xor_str(key: bytes, data: str) -> str:
@@ -27,13 +28,14 @@ def xor_str(key: bytes, data: str) -> str:
 
 def obfuscate(src: str) -> str:
     for name in TARGETS:
-        pat = re.compile(rf'{name}\s+= "(.*?)"\n')
+        # \)? — последняя запись var-блока может заканчиваться на "))" (baked.go)
+        pat = re.compile(rf'{name}\s+= "(.*?)"(\)?)')
         m = pat.search(src)
         if not m:
             continue
         key = os.urandom(16)
         repl = (f'{name} = mustDeobf("{xor_str(key, m.group(1))}", '
-                f'"{base64.b64encode(key).decode()}")\n')
+                f'"{base64.b64encode(key).decode()}"){m.group(2)}')
         src = pat.sub(repl.replace("\\", "\\\\"), src, count=1)
     # блоки const, содержащие mustDeof/mustDeobf, становятся var
     def const_to_var(mm: re.Match) -> str:
@@ -43,12 +45,12 @@ def obfuscate(src: str) -> str:
 
 
 def deobfuscate(src: str) -> str:
-    pat = re.compile(r'(\w+) = mustDeobf\("(.*?)", "(.*?)"\)\n')
+    pat = re.compile(r'(\w+) = mustDeobf\("(.*?)", "(.*?)"\)(\)?)')
     def repl(m: re.Match) -> str:
         enc = base64.b64decode(m.group(2))
         key = base64.b64decode(m.group(3))
         plain = bytes(b ^ key[i % len(key)] for i, b in enumerate(enc)).decode()
-        return f'{m.group(1)} = "{plain}"\n'
+        return f'{m.group(1)} = "{plain}"{m.group(4)}\n'
     return pat.sub(repl, src)
 
 

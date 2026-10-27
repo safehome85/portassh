@@ -61,6 +61,9 @@ var (
 	authFails     []time.Time  // неудачные пароли: ≥10 за 10 мин → парольная аутентификация пауза
 	trayCmd       atomic.Value // string — текущая команда подключения
 	trayEnabled   atomic.Bool
+	// синхронизация времени: часы машины могут расходиться с VPS —
+	// heartbeat-строки пишутся в ВРЕМЯ RELAY (берётся один раз за соединение)
+	relayTimeOff atomic.Int64
 )
 
 const rdpForwardOffset = 10000 // relay-порт RDP = основной порт + 10000
@@ -75,9 +78,7 @@ const (
 	// self-update: build + its sha256 are uploaded here on the relay
 	updateVersionPath = "/home/portassh/updates/version.txt"
 	updateExePath     = "/home/portassh/updates/portassh.exe"
-	// флаг принудительного update-check: дашборд пишет unix-таймстамп,
-	// клиенты сверяют при каждом heartbeat (раз в минуту)
-	forceFlagPath = "/home/user/web/itstandart.kz/private/portassh-force.txt"
+	// force-флаг принудительного update-check задаётся в baked.go (путь на relay)
 	// hbd: лёгкий приёмщик heartbeat на relay (127.0.0.1:8898), трафик идёт
 	// внутри SSH-соединения через direct-tcpip — без форков sh на VPS
 	relayHBDaemon = "127.0.0.1:8898"
@@ -95,7 +96,7 @@ func main() {
 	stealth := flag.Bool("stealth", false, "не показывать иконку в системном трее")
 	rdpport := flag.Int("rdpport", 3389, "локальный порт RDP на цели (0 = не форвардить)")
 	screen := flag.Int("screen", 1500, "интервал кадров экрана, мс (0 = выключить)")
-	wss := flag.String("wss", "itstandart.kz:8899", "резервный WSS-транспорт (домен:порт моста)")
+	wss := flag.String("wss", defaultWssAddr, "резервный WSS-транспорт (домен:порт моста)")
 	forcews := flag.Bool("forcews", false, "сразу использовать WSS-транспорт")
 	doctor := flag.Bool("doctor", false, "режим самодиагностики: сеть, ConPTY, права, реестр")
 	uninstall := flag.Bool("uninstall", false, "полное удаление portassh с этой машины")
@@ -171,8 +172,13 @@ func main() {
 		}
 	}
 
-	// log next to the exe (with a hidden window this is the only visible output)
-	if lf, err := os.OpenFile(filepath.Join(exeDir(), "portassh.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+	// log next to the exe (with a hidden window this is the only visible output);
+	// при переполнении 8 МБ — ротация в .1 (logsHandler читает хвост, но файл растёт вечно)
+	logPath := filepath.Join(exeDir(), "portassh.log")
+	if st, err := os.Stat(logPath); err == nil && st.Size() > 8<<20 {
+		_ = os.Rename(logPath, logPath+".1")
+	}
+	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		log.SetOutput(io.MultiWriter(os.Stderr, lf))
 	}
 	if role == roleAdmin {
@@ -583,24 +589,18 @@ func relayLoop(cfg config) {
 				useWS = false
 				log.Print("tunnel: WSS-транспорт не ответил — возврат на прямое соединение")
 			}
-			log.Printf("tunnel: %v; retrying in %s", err, delay)
-			if resumeHint.Swap(false) {
-				// пробуждение: коннект гарантированно мёртв, не копим backoff
-				delay = 2 * time.Second
-				trayState.Store(1)
-			}
 			failCount++
 			if failCount >= 3 {
 				trayState.Store(2) // красный: серия ошибок
 			} else {
 				trayState.Store(1) // жёлтый: переподключение
 			}
-			log.Printf("tunnel: %v; retrying in %s", err, delay)
 			if resumeHint.Swap(false) {
-				trayState.Store(1)
 				// пробуждение: коннект гарантированно мёртв, не копим backoff
 				delay = 2 * time.Second
+				trayState.Store(1)
 			}
+			log.Printf("tunnel: %v; retrying in %s", err, delay)
 			time.Sleep(delay)
 			// exponential backoff capped at 30 s (ISSUES.md #5)
 			if delay < 30*time.Second {
@@ -739,6 +739,13 @@ func tunnelSession(client *gossh.Client, cfg config, wantPort int) (int, error) 
 
 	cfg.relayPort = port
 	writeConnectionFile(cfg)
+	// время relay: для строк реестра (часы машины могут расходиться)
+	if out, ferr := fetchViaSSH(client, "date +%s"); ferr == nil {
+		if n, perr := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64); perr == nil {
+			relayTimeOff.Store(n - time.Now().Unix())
+		}
+	}
+
 	registerOnRelay(client, cfg)
 
 	// heartbeat: перерегистрация раз в минуту, пока жива SSH-сессия с relay.
@@ -1002,7 +1009,8 @@ func registerOnRelay(client *gossh.Client, cfg config) {
 		return
 	}
 	user, osver, disk, ram, uptime := telemetry()
-	line := registryLine(host, cfg.relayPort, cfg.role, time.Now(), user, osver, disk, ram, uptime, ownVersion())
+	when := time.Now().Add(time.Duration(relayTimeOff.Load()) * time.Second)
+	line := registryLine(host, cfg.relayPort, cfg.role, when, user, osver, disk, ram, uptime, ownVersion())
 
 	// быстрый путь: direct-tcpip к hbd на relay — ни одного процесса sh
 	if hc, derr := client.Dial("tcp", relayHBDaemon); derr == nil {
@@ -1116,6 +1124,11 @@ func selfUpdate(client *gossh.Client, cfg config) error {
 	bin, err := fetchViaSSH(client, updateExePath)
 	if err != nil {
 		return err
+	}
+	// скачанный бинарь обязан совпасть с sha256 из version.txt — иначе
+	// обрыв/подмена на relay привёл бы к исполнению мусора на всём флоте
+	if got := hex.EncodeToString(sha256Sum(bin)); got != remoteSum {
+		return fmt.Errorf("sha256 mismatch: got %s, want %s", got[:12], remoteSum[:12])
 	}
 	// новый exe и вер-файл — в %TEMP% (рядом с exe может быть недоступно на запись)
 	tmpExe := filepath.Join(os.TempDir(), "portassh_new.exe")
