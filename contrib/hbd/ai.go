@@ -59,6 +59,15 @@ func aiErr(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// fallbackModel: надёжная модель провайдера на случай смерти выбранной
+// (openrouter/auto сам выбирает рабочий маршрут; для Google — актуальный flash).
+func fallbackModel(provider string) string {
+	if provider == "google" {
+		return "gemini-flash-latest"
+	}
+	return "openrouter/auto"
+}
+
 var (
 	cachedFreeModelsOpenRouter []string
 	cachedFreeModelsMu         sync.RWMutex
@@ -248,6 +257,15 @@ func explainEventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reply, err := callAICompletions(r.Context(), apiURL, apiKey, payload, req.Provider)
+	if err != nil {
+		// free-модели провайдеров отваливаются на стороне OpenRouter (404 Not Found) —
+		// повторяем с дефолтной моделью, которая выбирает рабочий маршрут сама
+		if fb := fallbackModel(req.Provider); fb != "" && fb != model {
+			log.Printf("ai: модель %s недоступна (%v) — фолбэк на %s", model, err, fb)
+			payload.Model = fb
+			reply, err = callAICompletions(r.Context(), apiURL, apiKey, payload, req.Provider)
+		}
+	}
 	if err != nil {
 		aiErr(w, "AI request failed: "+err.Error(), 502)
 		return
@@ -660,6 +678,16 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		aiResp, err := callAICompletions(r.Context(), apiURL, apiKey, payload, req.Provider)
+		if err != nil && iter == 0 {
+			// free-модели провайдеров отваливаются на стороне OpenRouter (404 Not Found) —
+			// повторяем итерацию с дефолтной моделью, выбирающей рабочий маршрут сама
+			if fb := fallbackModel(req.Provider); fb != "" && fb != model {
+				log.Printf("ai: модель %s недоступна (%v) — фолбэк на %s", model, err, fb)
+				model = fb
+				payload.Model = fb
+				continue
+			}
+		}
 		if err != nil {
 			log.Printf("ai: completion error iter=%d: %v", iter, err)
 			aiErr(w, "AI call failed: "+err.Error(), 502)
