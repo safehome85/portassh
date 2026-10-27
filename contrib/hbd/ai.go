@@ -113,6 +113,12 @@ func rotate(models []string) string {
 	return best
 }
 
+func bumpUsage(model string) {
+	usageMu.Lock()
+	usageCount[model]++
+	usageMu.Unlock()
+}
+
 func autoCandidates(msgs []chatMessage) []string {
 	text := ""
 	if len(msgs) > 0 {
@@ -1073,6 +1079,9 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		aiResp, err := callAICompletions(r.Context(), apiURL, apiKey, payload, req.Provider)
+		if err == nil && ci < len(cands) {
+			bumpUsage(cands[ci])
+		}
 		if err != nil && len(cands) > 0 && ci+1 < len(cands) {
 			// free-модели отваливаются на стороне OpenRouter (404, 429, зависания) —
 			// берём следующего кандидата из списка ротации
