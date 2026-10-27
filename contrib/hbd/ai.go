@@ -52,6 +52,13 @@ var defaultGoogleAIModels = []string{
 	"gemini-flash-lite-latest",
 }
 
+// aiErr: ошибки AI-эндпоинтов в JSON — дашборд парсит ответ как json.
+func aiErr(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 var (
 	cachedFreeModelsOpenRouter []string
 	cachedFreeModelsMu         sync.RWMutex
@@ -158,7 +165,7 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 	portStr := r.URL.Query().Get("port")
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 1024 || port > 65535 {
-		http.Error(w, "bad port", 400)
+		aiErr(w, "bad port", 400)
 		return
 	}
 	ch := r.URL.Query().Get("channel")
@@ -188,12 +195,12 @@ type explainEventsRequest struct {
 
 func explainEventsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		aiErr(w, "method not allowed", 405)
 		return
 	}
 	var req explainEventsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), 400)
+		aiErr(w, "bad request: "+err.Error(), 400)
 		return
 	}
 	if req.Channel == "" {
@@ -205,13 +212,13 @@ func explainEventsHandler(w http.ResponseWriter, r *http.Request) {
 		eventsText = out
 	}
 	if eventsText == "" {
-		http.Error(w, "no events to analyze", 400)
+		aiErr(w, "no events to analyze", 400)
 		return
 	}
 
 	apiKey, apiURL, model := resolveProvider(req.Provider, req.Model, req.ApiKey)
 	if apiKey == "" {
-		http.Error(w, "API ключ для провайдера "+req.Provider+" не настроен", 401)
+		aiErr(w, "API ключ для провайдера "+req.Provider+" не настроен", 401)
 		return
 	}
 
@@ -242,7 +249,7 @@ func explainEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	reply, err := callAICompletions(r.Context(), apiURL, apiKey, payload, req.Provider)
 	if err != nil {
-		http.Error(w, "AI request failed: "+err.Error(), 502)
+		aiErr(w, "AI request failed: "+err.Error(), 502)
 		return
 	}
 
@@ -602,22 +609,22 @@ func callAICompletions(ctx context.Context, apiURL, apiKey string, req openAIReq
 // aiChatHandler: Copilot Tool Calling Loop
 func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		aiErr(w, "method not allowed", 405)
 		return
 	}
 	var req aiChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), 400)
+		aiErr(w, "bad request: "+err.Error(), 400)
 		return
 	}
 	if len(req.Messages) == 0 {
-		http.Error(w, "no messages", 400)
+		aiErr(w, "no messages", 400)
 		return
 	}
 
 	apiKey, apiURL, model := resolveProvider(req.Provider, req.Model, req.ApiKey)
 	if apiKey == "" {
-		http.Error(w, "API ключ не настроен для "+req.Provider, 401)
+		aiErr(w, "API ключ не настроен для "+req.Provider, 401)
 		return
 	}
 
@@ -655,7 +662,7 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 		aiResp, err := callAICompletions(r.Context(), apiURL, apiKey, payload, req.Provider)
 		if err != nil {
 			log.Printf("ai: completion error iter=%d: %v", iter, err)
-			http.Error(w, "AI call failed: "+err.Error(), 502)
+			aiErr(w, "AI call failed: "+err.Error(), 502)
 			return
 		}
 

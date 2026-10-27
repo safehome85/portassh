@@ -1329,7 +1329,7 @@ function evLoad() {
   const el = document.getElementById('evraw');
   el.textContent = 'чтение журнала ' + evChannel + ' через wevtutil…';
   fetch('?events=' + evPort + '&ch=' + evChannel)
-    .then(r => r.json())
+    .then(r => r.text()).then(t => { try { return JSON.parse(t); } catch (e) { return { error: t || ('HTTP ' + r.status) }; } })
     .then(j => {
       evRawText = j.raw || 'нет записей';
       el.textContent = evRawText;
@@ -1363,7 +1363,7 @@ function evAIAnalyze() {
       events: evRawText
     })
   })
-  .then(r => r.json())
+  .then(r => r.text()).then(t => { try { return JSON.parse(t); } catch (e) { return { error: t || ('HTTP ' + r.status) }; } })
   .then(j => {
     if (j.error) {
       cnt.innerHTML = '<div style="color:#dc2626">Ошибка AI: ' + j.error + '</div>';
@@ -1578,7 +1578,7 @@ function aiSend(text) {
       messages: aiChatHistory
     })
   })
-  .then(r => r.json())
+  .then(r => r.text()).then(t => { try { return JSON.parse(t); } catch (e) { return { error: t || ('HTTP ' + r.status) }; } })
   .then(j => {
     loadDiv.remove();
     aiBusy = false;
