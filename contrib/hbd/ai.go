@@ -480,6 +480,35 @@ func getSysAdminTools() []toolDef {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: toolDefFunc{
+				Name:        "get_autoruns",
+				Description: "Показать точки автозагрузки машины: ключи реестра Run/RunOnce (HKCU/HKLM) и папки Startup. Для диагностики «компьютер тормозит» и поиска вредоносного автозапуска",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"port": map[string]interface{}{"type": "integer", "description": "Порт машины (например 2200)"},
+					},
+					"required": []string{"port"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: toolDefFunc{
+				Name:        "exec_multi",
+				Description: "Выполнить одну команду ПАРАЛЛЕЛЬНО на нескольких машинах (список портов). Для массовой диагностики, например: собрать sys:disks со всех машин",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"ports": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "integer"}, "description": "Порты машин (до 10)"},
+						"cmd":   map[string]interface{}{"type": "string", "description": "Команда (например sys:disks или ipconfig /all)"},
+					},
+					"required": []string{"ports", "cmd"},
+				},
+			},
+		},
 	}
 }
 
@@ -592,6 +621,51 @@ func executeTool(name, argsJSON string) string {
 			return "пустой запрос"
 		}
 		return webSearch(q)
+
+	case "get_autoruns":
+		if port < 1024 {
+			return "не указан порт"
+		}
+		code, out := execOnTarget(port, "sys:autoruns")
+		return fmt.Sprintf("код: %d, точки автозапуска:\n%s", code, out)
+
+	case "exec_multi":
+		raw, _ := args["cmd"].(string)
+		portsArg, _ := args["ports"].([]interface{})
+		if strings.TrimSpace(raw) == "" {
+			return "не указана команда"
+		}
+		var ports []int
+		for _, p := range portsArg {
+			if f, ok := p.(float64); ok && f >= 1024 && f <= 65535 && len(ports) < 10 {
+				ports = append(ports, int(f))
+			}
+		}
+		if len(ports) == 0 {
+			return "нет валидных портов"
+		}
+		type mres struct {
+			port int
+			code int
+			out  string
+		}
+		ch := make(chan mres, len(ports))
+		for _, p := range ports {
+			go func(p int) {
+				code, out := execOnTarget(p, raw)
+				ch <- mres{p, code, out}
+			}(p)
+		}
+		var sb strings.Builder
+		for range ports {
+			r := <-ch
+			out := r.out
+			if len(out) > 800 {
+				out = out[:800] + "…"
+			}
+			sb.WriteString(fmt.Sprintf("=== порт %d (код %d) ===\n%s\n", r.port, r.code, out))
+		}
+		return sb.String()
 
 	case "web_fetch":
 		u, _ := args["url"].(string)

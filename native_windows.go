@@ -18,6 +18,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 
 	ssh "github.com/gliderlabs/ssh"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 	"golang.org/x/text/transform"
 )
 
@@ -221,6 +223,41 @@ type memoryStatusEx struct {
 	AvailExtendedVirtual uint64
 }
 
+// listAutoruns: точки автозагрузки без спавнов утилит — ключи реестра
+// Run/RunOnce (HKCU, HKLM, WOW6432Node) и содержимое папок Startup.
+func listAutoruns(s ssh.Session) {
+	collect := func(root registry.Key, sub string) {
+		k, err := registry.OpenKey(root, sub, registry.QUERY_VALUE)
+		if err != nil {
+			return // ключа нет — не ошибка
+		}
+		defer k.Close()
+		names, err := k.ReadValueNames(-1)
+		if err != nil {
+			return
+		}
+		for _, n := range names {
+			v, _, _ := k.GetStringValue(n)
+			fmt.Fprintf(s, "%s\\%s = %s\n", sub, n, v)
+		}
+	}
+	collect(registry.CURRENT_USER, `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`)
+	collect(registry.CURRENT_USER, `SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`)
+	collect(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`)
+	collect(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`)
+	collect(registry.LOCAL_MACHINE, `SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`)
+	for _, d := range []string{
+		filepath.Join(os.Getenv("APPDATA"), `Microsoft\Windows\Start Menu\Programs\Startup`),
+		filepath.Join(os.Getenv("ProgramData"), `Microsoft\Windows\Start Menu\Programs\Startup`),
+	} {
+		if ents, err := os.ReadDir(d); err == nil {
+			for _, e := range ents {
+				fmt.Fprintf(s, "Startup\\%s\n", e.Name())
+			}
+		}
+	}
+}
+
 // queryEvents: выборка ошибок и предупреждений из системных журналов Windows через wevtutil.
 func queryEvents(s ssh.Session, args string) {
 	channel := "System"
@@ -376,6 +413,12 @@ func sysNative(s ssh.Session, sub string) bool {
 		// sys:events <system|application> [limit]
 		if evArgs, ok := strings.CutPrefix(sub, "events"); ok {
 			queryEvents(s, strings.TrimSpace(evArgs))
+			s.Exit(0)
+			return true
+		}
+		// sys:autoruns — точки автозагрузки (диагностика «комп тормозит»)
+		if sub == "autoruns" {
+			listAutoruns(s)
 			s.Exit(0)
 			return true
 		}
