@@ -665,6 +665,54 @@ func rejectedHostsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
+func dismissRejectedHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Host string `json:"host"`
+		All  bool   `json:"all"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Host = r.FormValue("host")
+		if r.FormValue("all") == "1" || r.FormValue("all") == "true" {
+			req.All = true
+		}
+	}
+	h := strings.TrimSpace(req.Host)
+
+	rejectedMu.Lock()
+	defer rejectedMu.Unlock()
+
+	if req.All || h == "*" || h == "all" {
+		lastRejected = make(map[string]time.Time)
+		_ = os.WriteFile("/home/portassh/rejected-hosts.txt", []byte(""), 0644)
+	} else if h != "" {
+		delete(lastRejected, h)
+		if rb, err := os.ReadFile("/home/portassh/rejected-hosts.txt"); err == nil {
+			var kept []string
+			for _, l := range strings.Split(string(rb), "\n") {
+				f := strings.Fields(l)
+				if len(f) >= 3 && f[2] == h {
+					continue
+				}
+				if strings.TrimSpace(l) != "" {
+					kept = append(kept, l)
+				}
+			}
+			data := ""
+			if len(kept) > 0 {
+				data = strings.Join(kept, "\n") + "\n"
+			}
+			_ = os.WriteFile("/home/portassh/rejected-hosts.txt", []byte(data), 0644)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
 func main() {
 	compact()
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
@@ -703,6 +751,7 @@ func main() {
 		http.HandleFunc("/events", eventsHandler)
 		http.HandleFunc("/api/allow-host", allowHostHandler)
 		http.HandleFunc("/api/rejected-hosts", rejectedHostsHandler)
+		http.HandleFunc("/api/dismiss-rejected", dismissRejectedHandler)
 		http.HandleFunc("/ai/config", aiConfigHandler)
 		http.HandleFunc("/ai/explain-events", explainEventsHandler)
 		http.HandleFunc("/ai/chat", aiChatHandler)

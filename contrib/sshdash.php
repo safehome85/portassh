@@ -264,6 +264,30 @@ if (isset($_GET['allow_host']) && $_GET['allow_host'] !== '') {
     exit;
 }
 
+// Удалить хост из очереди неразрешенных (rejected-hosts.txt)
+if (isset($_GET['del_rejected']) && $_GET['del_rejected'] !== '') {
+    $target = trim((string)$_GET['del_rejected']);
+    if ($target === 'all') {
+        $ctx = stream_context_create(['http' => [
+            'method' => 'POST',
+            'timeout' => 5,
+            'header' => "Content-Type: application/json\r\n",
+            'content' => json_encode(['all' => true]),
+        ]]);
+        @file_get_contents('http://127.0.0.1:8897/api/dismiss-rejected', false, $ctx);
+    } elseif (preg_match('/^[A-Za-z0-9._-]+$/', $target)) {
+        $ctx = stream_context_create(['http' => [
+            'method' => 'POST',
+            'timeout' => 5,
+            'header' => "Content-Type: application/json\r\n",
+            'content' => json_encode(['host' => $target]),
+        ]]);
+        @file_get_contents('http://127.0.0.1:8897/api/dismiss-rejected', false, $ctx);
+    }
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+    exit;
+}
+
 // AI: анализ журнала событий
 if (isset($_GET['ai_explain_events'])) {
     @set_time_limit(180);
@@ -599,6 +623,29 @@ if ($rawRej !== false) {
   .pw { font-family: ui-monospace, Consolas, monospace; color: #b45309; font-weight: 700; user-select: all; }
   .result-chip { font-weight: 800; }
   a { color: var(--accent); }
+  /* --- адаптив: телефоны --- */
+  @media (max-width: 700px) {
+    body { padding: 12px 10px 40px; font-size: 14px; }
+    .wrap { max-width: 100%; }
+    h1 { font-size: 18px; gap: 7px; }
+    .tabs { flex-wrap: wrap; }
+    #q { width: 100%; }
+    .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .card { padding: 10px 12px; }
+    .card .num { font-size: 20px; }
+    th, td { padding: 8px 10px; }
+    .panel { overflow-x: auto; }
+    .mcard { margin: 16px 8px !important; max-height: 90vh; }
+    table pre { max-width: 100% !important; overflow-x: auto; }
+    /* таблица машин → карточки */
+    .mtab, .mtab tr { display: block; }
+    .mtab tr { border-bottom: 1px solid #eef1f6; padding: 10px 2px; }
+    .mtab tr:first-child { display: none; }
+    .mtab td { display: inline-block; padding: 3px 2px; border: 0; vertical-align: middle; margin-right: 8px; }
+    .mtab td:nth-child(2) { display: block; width: auto; margin: 2px 0; word-break: break-word; }
+    .mtab td:nth-child(5) { display: block; margin: 2px 0; }
+    .mtab tr:hover td { background: transparent; }
+  }
 </style>
 </head>
 <body>
@@ -707,11 +754,13 @@ function filterRows(q) {
   <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin:0 0 16px;color:#991b1b;font-size:13px;display:flex;flex-wrap:wrap;align-items:center;gap:10px">
     <span><b>⚠️ Попытка подключения неразрешённых хостов:</b></span>
     <?php foreach ($rejHosts as $rh): ?>
-      <span style="display:inline-flex;align-items:center;gap:8px;background:#fee2e2;border:1px solid #fecaca;padding:4px 10px;border-radius:6px">
+      <span style="display:inline-flex;align-items:center;gap:6px;background:#fee2e2;border:1px solid #fecaca;padding:4px 10px;border-radius:6px">
         <code><?= htmlspecialchars($rh['host']) ?></code> <span style="font-size:11px;color:#6b7280"><?= htmlspecialchars($rh['time']) ?></span>
-        <a href="?allow_host=<?= urlencode($rh['host']) ?>" style="background:#dc2626;color:#fff;text-decoration:none;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">+ Разрешить</a>
+        <a href="?allow_host=<?= urlencode($rh['host']) ?>" style="background:#16a34a;color:#fff;text-decoration:none;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600" title="Добавить в белый список">+ Разрешить</a>
+        <a href="?del_rejected=<?= urlencode($rh['host']) ?>" style="background:#dc2626;color:#fff;text-decoration:none;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600" title="Удалить запись">✕ Удалить</a>
       </span>
     <?php endforeach; ?>
+    <a href="?del_rejected=all" onclick="return confirm('Очистить весь список неразрешённых хостов?')" style="background:#64748b;color:#fff;text-decoration:none;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;margin-left:auto">🗑 Очистить все</a>
   </div>
 <?php endif; ?>
 <section class="cards">
@@ -731,7 +780,7 @@ function filterRows(q) {
   </div>
   <form method="post" action="/sshdash">
   <input type="hidden" name="t" value="<?= $CSRF ?>">
-  <table>
+  <table class="mtab">
   <tr><th style="width:34px"><input type="checkbox" onchange="document.querySelectorAll('input[name=sel[]]').forEach(c=>c.checked=this.checked)"></th><th>Машина</th><th>Роль</th><th>Порт</th><th>Действия</th><th>Heartbeat</th></tr>
   <?php
   if (!$active) {
@@ -1025,7 +1074,7 @@ foreach ($invPorts as $p => $inv) {
 </div>
 </div>
 <div id="filemodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50" onclick="if(event.target===this)closeFiles()">
-  <div style="background:#fff;max-width:640px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
+  <div class="mcard" style="background:#fff;max-width:640px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">
       <b>Файлы — <span id="flhost"></span> <span style="color:#64748b;font-size:12px">(домашняя папка)</span></b>
       <a href="#" onclick="closeFiles();return false" style="text-decoration:none">✕</a>
@@ -1123,7 +1172,7 @@ document.querySelectorAll('.pmi').forEach(el => {
 </script>
 
 <div id="procmodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50" onclick="if(event.target===this)closeProcs()">
-  <div style="background:#fff;max-width:680px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
+  <div class="mcard" style="background:#fff;max-width:680px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">
       <b>Диспетчер задач — <span id="pmhost"></span></b>
       <a href="#" onclick="closeProcs();return false" style="text-decoration:none">✕</a>
@@ -1135,7 +1184,7 @@ document.querySelectorAll('.pmi').forEach(el => {
 </div>
 
 <div id="svcmodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50" onclick="if(event.target===this)closeSvc()">
-  <div style="background:#fff;max-width:680px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
+  <div class="mcard" style="background:#fff;max-width:680px;margin:48px auto;border-radius:12px;padding:16px 18px;max-height:80vh;display:flex;flex-direction:column">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">
       <b>Службы — <span id="svchost"></span></b>
       <a href="#" onclick="closeSvc();return false" style="text-decoration:none">✕</a>
