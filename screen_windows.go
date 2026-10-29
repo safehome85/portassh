@@ -351,6 +351,8 @@ func execScreenInput(line string) {
 
 // screenPushLoop: пока жив туннель — кадры на hbd + выполнение ввода.
 // Если просмотрщика нет (hbd отвечает no), кадр не снимается — экономия LTE.
+// Ввод обрабатывается отдельным быстрым циклом (inputLoop), каждый ввод
+// триггерит немедленный кадр (kick), поэтому мышь не «плывёт».
 func screenPushLoop(client *gossh.Client, cfg config, port int, stop chan struct{}) {
 	hc := &http.Client{
 		Timeout: 30 * time.Second,
@@ -360,13 +362,19 @@ func screenPushLoop(client *gossh.Client, cfg config, port int, stop chan struct
 			},
 		},
 	}
+	kick := make(chan struct{}, 1)
+	goSafe("screeninput", func() { inputLoop(client, cfg, port, stop, hc, kick) })
 	t := time.NewTicker(time.Duration(cfg.screenMs) * time.Millisecond)
 	defer t.Stop()
 	for {
 		select {
 		case <-stop:
 			return
+		case <-kick:
+			// ввод только что исполнен — снимаем кадр сразу
 		case <-t.C:
+		}
+		{
 			// есть ли зритель?
 			resp, err := hc.Get(fmt.Sprintf("http://127.0.0.1:8897/viewer?port=%d", port))
 			if err != nil {
@@ -389,15 +397,43 @@ func screenPushLoop(client *gossh.Client, cfg config, port int, stop chan struct
 				io.Copy(io.Discard, pr.Body)
 				pr.Body.Close()
 			}
-			// очередь ввода
-			if ir, err := hc.Get(fmt.Sprintf("http://127.0.0.1:8897/input?port=%d", port)); err == nil {
-				ib, _ := io.ReadAll(ir.Body)
-				ir.Body.Close()
-				for _, line := range strings.Split(string(ib), "\n") {
-					if strings.TrimSpace(line) != "" {
-						execScreenInput(strings.TrimSpace(line))
-					}
-				}
+		}
+	}
+}
+
+// inputLoop: асинхронный long-polling очереди ввода (с мгновенным пробуждением push на сервере).
+// Вместо постоянного опроса каждые 60 мс запрос висит на сервере и возвращается мгновенно при клике/вводе.
+func inputLoop(client *gossh.Client, cfg config, port int, stop chan struct{}, hc *http.Client, kick chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		url := fmt.Sprintf("http://127.0.0.1:8897/input?port=%d&wait=1", port)
+		ir, err := hc.Get(url)
+		if err != nil {
+			select {
+			case <-stop:
+				return
+			case <-time.After(1 * time.Second):
+				continue
+			}
+		}
+		ib, _ := io.ReadAll(ir.Body)
+		ir.Body.Close()
+
+		n := 0
+		for _, line := range strings.Split(string(ib), "\n") {
+			if s := strings.TrimSpace(line); s != "" {
+				execScreenInput(s)
+				n++
+			}
+		}
+		if n > 0 {
+			select {
+			case kick <- struct{}{}:
+			default:
 			}
 		}
 	}

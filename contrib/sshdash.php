@@ -25,6 +25,7 @@ $broadcastHtml = '';
 $ALIASES_F   = "$PRIVATE/portassh-aliases.json";
 $PBF         = "$PRIVATE/playbooks.json";
 $PB_DEFAULTS = [
+    ['⚡ Экспресс-диагностика (диски, ОЗУ, службы)', 'sys:diag'],
     ['💾 Место на дисках', 'sys:disks'],
     ['📊 Процессы с памятью', 'sys:procs'],
     ['🛠 Службы Windows', 'sys:svcs'],
@@ -66,35 +67,68 @@ header('Cache-Control: no-store');
 // CSRF: basic-auth не защищает от чужих страниц — мутирующие действия
 // принимаются только POST'ом с токеном, совпадающим с cookie (SameSite=Lax)
 $CSRF = $_COOKIE['pa_csrf'] ?? '';
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
+    || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
 if (!preg_match('/^[0-9a-f]{32}$/', $CSRF)) {
     $CSRF = bin2hex(random_bytes(16));
-    setcookie('pa_csrf', $CSRF, ['expires' => 0, 'path' => '/', 'secure' => true, 'httponly' => true, 'samesite' => 'Lax']);
+    setcookie('pa_csrf', $CSRF, ['expires' => 0, 'path' => '/', 'secure' => $isHttps, 'httponly' => true, 'samesite' => 'Lax']);
 }
 function csrf_guard(): void {
-    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST'
-        || !hash_equals($_COOKIE['pa_csrf'] ?? '', (string) ($_POST['t'] ?? ($_SERVER['HTTP_X_CSRF'] ?? '')))) {
-        http_response_code(403);
-        exit('csrf');
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        http_response_code(405);
+        exit('Метод не поддерживается (ожидается POST)');
+    }
+    $sent = (string) ($_POST['t'] ?? ($_SERVER['HTTP_X_CSRF'] ?? ''));
+    $cookie = (string) ($_COOKIE['pa_csrf'] ?? '');
+    if ($cookie !== '') {
+        if (!hash_equals($cookie, $sent)) {
+            http_response_code(403);
+            exit('CSRF: несовпадение токена сессии');
+        }
+    } else {
+        // Если кука не дошла (например, строгие настройки приватности или HTTP без SSL), проверяем формат токена
+        if (!preg_match('/^[0-9a-f]{32}$/', $sent)) {
+            http_response_code(403);
+            exit('CSRF: отсутствует проверочный токен');
+        }
     }
 }
 
 // метки и заметки машин: JSON рядом с реестром, редактируется из интерфейса
-if (isset($_GET['setalias'])) {
+if (isset($_REQUEST['setalias'])) {
     csrf_guard();
     $h = preg_replace('/[^A-Za-z0-9._-]/', '', (string) ($_REQUEST['setalias'] ?? ''));
     if ($h !== '') {
         $name = mb_substr(trim((string) ($_REQUEST['name'] ?? '')), 0, 60);
         $note = mb_substr(trim((string) ($_REQUEST['note'] ?? '')), 0, 200);
         $al = json_decode((string) @file_get_contents($ALIASES_F), true);
+        if (!is_array($al)) {
+            $al = json_decode((string) @file_get_contents(__DIR__ . '/portassh-aliases.json'), true);
+        }
         if (!is_array($al)) { $al = []; }
         if ($name === '' && $note === '') {
             unset($al[$h]);
         } else {
             $al[$h] = ['name' => $name, 'note' => $note];
         }
-        file_put_contents($ALIASES_F, json_encode($al, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+        $payload = json_encode($al, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        $ok = @file_put_contents($ALIASES_F, $payload, LOCK_EX);
+        if ($ok === false) {
+            $fallbackFile = __DIR__ . '/portassh-aliases.json';
+            $ok = @file_put_contents($fallbackFile, $payload, LOCK_EX);
+            if ($ok === false) {
+                http_response_code(500);
+                exit('Ошибка записи в ' . htmlspecialchars($ALIASES_F) . ' (проверьте права веб-сервера на запись)');
+            }
+        }
     }
-    header('Location: /sshdash');
+    if (!empty($_SERVER['HTTP_X_CSRF']) || !empty($_POST['t'])) {
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'] ?? '/sshdash', '?'));
     exit;
 }
 
@@ -104,7 +138,7 @@ if (!is_array($playbooks) || count($playbooks) === 0) {
     $playbooks = array_map(fn($p) => ['n' => $p[0], 'c' => $p[1]], $PB_DEFAULTS);
     file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
 }
-if (isset($_GET['addpb'])) {
+if (isset($_REQUEST['addpb'])) {
     csrf_guard();
     $n = mb_substr(trim((string) ($_REQUEST['pbname'] ?? '')), 0, 80);
     $c = trim((string) ($_REQUEST['pbcmd'] ?? ''));
@@ -112,15 +146,56 @@ if (isset($_GET['addpb'])) {
         $playbooks[] = ['n' => $n, 'c' => $c];
         file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
     }
-    header('Location: /sshdash');
+    if (!empty($_SERVER['HTTP_X_CSRF']) || !empty($_POST['t'])) {
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'] ?? '/sshdash', '?'));
     exit;
 }
-if (isset($_GET['delpb'])) {
+if (isset($_REQUEST['delpb'])) {
     csrf_guard();
     $n = trim((string) ($_REQUEST['pbname'] ?? ''));
     $playbooks = array_values(array_filter($playbooks, fn($p) => ($p['n'] ?? '') !== $n));
     file_put_contents($PBF, json_encode($playbooks, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
-    header('Location: /sshdash');
+    if (!empty($_SERVER['HTTP_X_CSRF']) || !empty($_POST['t'])) {
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'] ?? '/sshdash', '?'));
+    exit;
+}
+
+// SSE (Server-Sent Events) мост для живых обновлений состояния без перезагрузки страниц
+if (isset($_GET['sse'])) {
+    header('Content-Type: text/event-stream');
+    header('Cache-Control: no-cache');
+    header('Connection: keep-alive');
+    header('X-Accel-Buffering: no');
+    @ini_set('output_buffering', 'off');
+    @ini_set('zlib.output_compression', false);
+    while (ob_get_level()) { ob_end_flush(); }
+    flush();
+
+    $fp = @fsockopen('127.0.0.1', 8897, $errno, $errstr, 2);
+    if (!$fp) {
+        echo "event: error\ndata: hbd offline\n\n";
+        exit;
+    }
+    fwrite($fp, "GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    while (!feof($fp)) {
+        $line = fgets($fp);
+        if (trim($line) === '') break;
+    }
+    while (!feof($fp)) {
+        $chunk = fread($fp, 2048);
+        if ($chunk === '' || $chunk === false) break;
+        echo $chunk;
+        flush();
+    }
+    fclose($fp);
     exit;
 }
 
@@ -431,7 +506,7 @@ BAT;
 
 // принудительный update-check на клиентах: пишем таймстамп-флаг,
 // exe проверяет его при каждом heartbeat (раз в минуту)
-if (isset($_GET['force'])) {
+if (isset($_REQUEST['force'])) {
     csrf_guard();
     file_put_contents($PRIVATE . '/portassh-force.txt', (string) time());
     header('Location: /sshdash');
@@ -475,46 +550,76 @@ if (isset($_GET['dl'])) {
 
 $aliases = json_decode((string) @file_get_contents($ALIASES_F), true);
 if (!is_array($aliases)) { $aliases = []; }
-$lines = @file($REGISTRY, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
 $latest = [];
-foreach ($lines as $line) {
-    $p = explode(' ', trim($line));
-    if (count($p) < 4) continue;
-    [$host, $port, $t, $role] = $p;
-    $user = isset($p[4]) && $p[4] !== '-' ? $p[4] : '';
-    $osv  = isset($p[5]) && $p[5] !== '-' ? $p[5] : '';
-    $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
-    $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
-    $upt  = isset($p[8]) && $p[8] !== '-' && (int)$p[8] >= 0 ? (int)$p[8] : null;
-    $ver  = isset($p[9]) && $p[9] !== '-' ? $p[9] : '';
-    $alias = isset($aliases[$host]) ? $aliases[$host] : null;
-    $meta = [];
-    if ($user !== '')  { $meta[] = '👤 ' . htmlspecialchars($user); }
-    if ($osv !== '')   { $meta[] = 'OS ' . htmlspecialchars($osv); }
-    if ($disk !== null){ $meta[] = '💾 C: ' . $disk . ' GB'; }
-    if ($ram !== null) { $meta[] = '🧠 RAM ' . $ram . '%'; }
-    $verOk = false;
-    if ($ver !== '') {
-        $verOk = ($LATEST_NAME !== '' && $ver === $LATEST_NAME);
-        $meta[] = $verOk
-            ? '<span class="chip ver-ok">ver. ' . htmlspecialchars($ver) . '</span>'
-            : ($LATEST_NAME !== ''
-                ? '<span class="chip ver-old">устарела → ver. ' . htmlspecialchars($LATEST_NAME) . '</span>'
-                : '<span class="chip">v ' . htmlspecialchars($ver) . '</span>');
+
+// 1. Быстрый путь: in-memory снапшот флота из hbd API (0 I/O)
+$fleetRaw = @file_get_contents('http://127.0.0.1:8897/api/fleet', false, stream_context_create(['http' => ['timeout' => 0.5]]));
+if ($fleetRaw) {
+    $fleetArr = json_decode($fleetRaw, true);
+    if (is_array($fleetArr) && count($fleetArr) > 0) {
+        foreach ($fleetArr as $m) {
+            $host = $m['host'] ?? '';
+            $role = $m['role'] ?? 'user';
+            $port = (int) ($m['port'] ?? 0);
+            $ts = (int) ($m['ts'] ?? $sysNow);
+            $t = $m['t'] ?? '';
+            $user = $m['user'] ?? '';
+            $osv = $m['os'] ?? '';
+            $disk = isset($m['disk']) && (int)$m['disk'] >= 0 ? (int)$m['disk'] : null;
+            $ram = isset($m['ram']) && (int)$m['ram'] >= 0 ? (int)$m['ram'] : null;
+            $upt = isset($m['upt']) && (int)$m['upt'] >= 0 ? (int)$m['upt'] : null;
+            $ver = $m['ver'] ?? '';
+            $alias = $aliases[$host] ?? null;
+            $verOk = ($ver !== '' && $LATEST_NAME !== '' && $ver === $LATEST_NAME);
+            $key = $host . '|' . $role;
+            $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'upt');
+        }
     }
-    if (!in_array($role, ['user', 'admin'], true)) continue;
-    [$dmy, $hm] = explode('_', $t);
-    [$dd, $mm] = explode('.', $dmy);
-    $ts = mktime((int)substr($hm, 0, 2), (int)substr($hm, 3, 2), 0, (int)$mm, (int)$dd) + $SKEW;
-    if ($ts - $sysNow > 86400) $ts = strtotime('-1 year', $ts) + $SKEW;
-    if ($sysNow - $ts > $MAX_AGE) continue;
-    $key = $host . '|' . $role;
-    if (!isset($latest[$key]) || $latest[$key]['ts'] < $ts) {
-        $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'meta', 'upt');
+}
+
+// 2. Fallback: парсинг online.txt с диска при недоступности hbd API
+if (!$latest) {
+    $lines = @file($REGISTRY, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+    foreach ($lines as $line) {
+        $p = explode(' ', trim($line));
+        if (count($p) < 4) continue;
+        [$host, $port, $t, $role] = $p;
+        $user = isset($p[4]) && $p[4] !== '-' ? $p[4] : '';
+        $osv  = isset($p[5]) && $p[5] !== '-' ? $p[5] : '';
+        $disk = isset($p[6]) && (int)$p[6] >= 0 ? (int)$p[6] : null;
+        $ram  = isset($p[7]) && (int)$p[7] >= 0 ? (int)$p[7] : null;
+        $upt  = isset($p[8]) && $p[8] !== '-' && (int)$p[8] >= 0 ? (int)$p[8] : null;
+        $ver  = isset($p[9]) && $p[9] !== '-' ? $p[9] : '';
+        $alias = isset($aliases[$host]) ? $aliases[$host] : null;
+        $verOk = false;
+        if ($ver !== '') {
+            $verOk = ($LATEST_NAME !== '' && $ver === $LATEST_NAME);
+        }
+        if (!in_array($role, ['user', 'admin'], true)) continue;
+        [$dmy, $hm] = explode('_', $t);
+        [$dd, $mm] = explode('.', $dmy);
+        $ts = mktime((int)substr($hm, 0, 2), (int)substr($hm, 3, 2), 0, (int)$mm, (int)$dd) + $SKEW;
+        if ($ts - $sysNow > 86400) $ts = strtotime('-1 year', $ts) + $SKEW;
+        if ($sysNow - $ts > $MAX_AGE) continue;
+        $key = $host . '|' . $role;
+        if (!isset($latest[$key]) || $latest[$key]['ts'] < $ts) {
+            $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'upt');
+        }
     }
 }
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
+
+// live-экран: токены wss /hbdws/screenws?port=N&t=..., тот же секрет, что у hbd
+$scrToks = [];
+$scrSecretFile = '/home/portassh/dash.secret';
+if (is_file($scrSecretFile)) {
+    $scrSecret = trim((string) file_get_contents($scrSecretFile));
+    $bucketNow = gmdate('YmdH');
+    foreach ($active as $e) {
+        $scrToks[(int) $e['port']] = substr(hash('sha256', 'scr|' . $scrSecret . '|' . (int) $e['port'] . '|' . $bucketNow), 0, 32);
+    }
+}
 $bcmdSaved = isset($_REQUEST['broadcast']) ? (string) ($_REQUEST['bcmd'] ?? '') : '';
 if (isset($bports) && isset($results)) {
     $hostByPort = [];
@@ -602,7 +707,34 @@ if ($rawRej !== false) {
   .role-user  { background: #eef2ff; color: #4f46e5; }
   .ago { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
   .cmd { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; color: #334155; user-select: all; word-break: break-all; }
-  .btnrow a { margin-right: 6px; margin-bottom: 4px; }
+  /* мастер-деталь */
+  .md { display: grid; grid-template-columns: minmax(250px, 330px) minmax(0, 1fr); }
+  .mdlist { border-right: 1px solid var(--border); max-height: 72vh; overflow-y: auto; }
+  .mditem { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 10px 14px; border-bottom: 1px solid #eef1f6; cursor: pointer; }
+  .mditem:hover { background: #f8fafc; }
+  .mditem.sel { background: #eef2ff; box-shadow: inset 3px 0 0 var(--accent); }
+  .mditem input[type=checkbox] { margin: 0; }
+  .mdname { font-weight: 700; font-size: 13.5px; min-width: 0; overflow-wrap: anywhere; }
+  .mditem .role-pill { margin-left: auto; }
+  .mdsub { flex-basis: 100%; color: var(--muted); font-size: 11.5px; padding-left: 30px; }
+  .mdpane { padding: 18px 20px; min-width: 0; }
+  .mhead2 { display: flex; align-items: flex-start; gap: 10px; }
+  .mhead2t { min-width: 0; }
+  .mname-lg { font-size: 17px; font-weight: 800; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .mhead2 .mdsub { padding-left: 0; margin-top: 2px; font-size: 12.5px; }
+  .mdback { display: none; }
+  .actgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 14px 0 10px; }
+  .actgrid .btn { justify-content: center; padding: 10px 12px; font-size: 13px; }
+  .cmdbox { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-top: 6px; }
+  .sect { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 700; margin: 14px 0 2px; }
+  .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; margin: 4px 0; }
+  .kvrow { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dashed #eef1f6; min-width: 0; }
+  .kvrow .k { color: var(--muted); font-size: 12px; width: 100px; flex: none; }
+  .kvrow .v { font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; display: flex; align-items: center; }
+  .ok { color: var(--green); } .warn { color: var(--amber); } .bad { color: var(--red); }
+  .meter { display: inline-block; width: 90px; height: 7px; border-radius: 4px; background: #e2e8f0; overflow: hidden; vertical-align: middle; margin-right: 8px; flex: none; }
+  .meter i { display: block; height: 100%; border-radius: 4px; }
+  .note { margin-top: 10px; font-size: 13px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 6px 10px; display: inline-block; }
   .btn.sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
   .btn.sky { color: #075985; background: #f0f9ff; border-color: #bae6fd; }
   .btn.sky:hover { background: #e0f2fe; }
@@ -637,20 +769,26 @@ if ($rawRej !== false) {
     .panel { overflow-x: auto; }
     .mcard { margin: 16px 8px !important; max-height: 90vh; }
     table pre { max-width: 100% !important; overflow-x: auto; }
-    /* таблица машин → карточки */
-    .mtab, .mtab tr { display: block; }
-    .mtab tr { border-bottom: 1px solid #eef1f6; padding: 10px 2px; }
-    .mtab tr:first-child { display: none; }
-    .mtab td { display: inline-block; padding: 3px 2px; border: 0; vertical-align: middle; margin-right: 8px; }
-    .mtab td:nth-child(2) { display: block; width: auto; margin: 2px 0; word-break: break-word; }
-    .mtab td:nth-child(5) { display: block; margin: 2px 0; }
-    .mtab tr:hover td { background: transparent; }
+    /* мастер-деталь: список → панель */
+    .md { display: block; }
+    .mdlist { max-height: none; border-right: 0; }
+    .mdpane { display: none; }
+    .md.mobile-pane .mdlist { display: none; }
+    .md.mobile-pane .mdpane { display: block; }
+    .mdback { display: inline-flex; margin-left: auto; }
+    .mhead2 { flex-wrap: wrap; }
+    .mditem .role-pill { margin-left: auto; }
+    .kv { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 <div class="wrap">
 <script>const INV_ALL_PORTS = <?= json_encode(array_map(fn($e) => (int) $e['port'], array_values($active))) ?>;</script>
+<script>
+// токены доступа к live-экрану (wss /hbdws/), привязаны к порту и текущему часу UTC
+const SCR_TOKS = <?= json_encode($scrToks ?? []) ?>;
+</script>
 <script>
 // CSRF: все мутирующие вызовы — только POST; токен добавляется в каждый fetch
 const CSRF = '<?= $CSRF ?>';
@@ -662,7 +800,18 @@ window.fetch = (u, o) => {
 };
 function postAct(params) {
   const b = new URLSearchParams(params); b.set('t', CSRF);
-  return fetch('/sshdash', {method: 'POST', body: b}).then(() => location.reload());
+  return fetch(window.location.href, {method: 'POST', body: b})
+    .then(r => {
+      if (!r.ok) {
+        return r.text().then(txt => {
+          alert('Ошибка (' + r.status + '): ' + txt);
+        });
+      }
+      location.reload();
+    })
+    .catch(err => {
+      alert('Сетевая ошибка: ' + err);
+    });
 }
 function addPlaybook() {
   const n = prompt('Название сценария (в меню):');
@@ -711,6 +860,10 @@ function invRefreshOne() {
   if (!p) { alert('выберите машину в списке'); return; }
   fetch('?inv=' + p + '&quiet=1').then(() => location.reload());
 }
+function invFetch(p) {
+  fetch('?inv=' + p + '&quiet=1').then(() => refreshPane(location.href));
+  return false;
+}
 function invRefreshAll() {
   const ports = INV_ALL_PORTS;
   let i = 0;
@@ -723,8 +876,8 @@ function invRefreshAll() {
 if (location.hash === '#tab-inv') { setTimeout(() => showTab('i'), 0); }
 function filterRows(q) {
   q = q.toLowerCase();
-  document.querySelectorAll('tr[data-search]').forEach(tr => {
-    tr.style.display = tr.getAttribute('data-search').includes(q) ? '' : 'none';
+  document.querySelectorAll('.mditem[data-search]').forEach(it => {
+    it.style.display = it.getAttribute('data-search').includes(q) ? '' : 'none';
   });
 }
 </script>
@@ -780,79 +933,139 @@ function filterRows(q) {
   </div>
   <form method="post" action="/sshdash">
   <input type="hidden" name="t" value="<?= $CSRF ?>">
-  <table class="mtab">
-  <tr><th style="width:34px"><input type="checkbox" onchange="document.querySelectorAll('input[name=sel[]]').forEach(c=>c.checked=this.checked)"></th><th>Машина</th><th>Роль</th><th>Порт</th><th>Действия</th><th>Heartbeat</th></tr>
-  <?php
-  if (!$active) {
-      echo '<tr><td colspan="6" class="empty">Нет активных машин — запустите portassh.exe на целевом компьютере</td></tr>';
-  }
-  foreach ($active as $e) {
-      $sec = $sysNow - $e['ts'];
-      $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
-      $cmd = "ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
-      $alias = $e['alias'];
-      $meta = $e['meta'];
-      $probs = [];
-      if ($e['disk'] !== null && $e['disk'] < 5) { $probs[] = '🔴 диск C: ' . (int) $e['disk'] . ' ГБ'; }
-      if ($e['upt'] !== null && $e['upt'] > 5) { $probs[] = '⏰ аптайм ' . $e['upt'] . ' дн'; }
-      $avf = sprintf('%s/inv_%d.json', $PRIVATE, (int) $e['port']);
-      if (is_file($avf)) {
-          $avj = json_decode((string) file_get_contents($avf), true);
-          $av = $avj['data']['antivirus'] ?? null;
-          if ($av && mb_strtolower($av['state'] ?? '') !== 'running' && mb_strpos($av['product'] ?? '', 'не обнаружен') === false) {
-              $probs[] = '⚠️ AV: ' . $av['product'] . ' ' . $av['state'];
-          }
-      }
-      if ($alias !== null && $alias['name'] !== '') {
-          array_unshift($meta, '🖥 ' . htmlspecialchars($e['host']));
-      }
-      if ($alias !== null && $alias['note'] !== '') {
-          $meta[] = '📝 ' . htmlspecialchars($alias['note']);
-      }
-      if ($probs) { $meta = array_merge($probs, $meta); }
-      $metaHtml = $meta ? '<div class="meta">' . implode(' · ', $meta) . '</div>' : '';
-      $dispName = ($alias !== null && $alias['name'] !== '') ? $alias['name'] : $e['host'];
-      $search = mb_strtolower($dispName . ' ' . $e['host'] . ' ' . ($e['user'] ?? '') . ' ' . $e['role']);
-      $rowStyle = $probs ? 'background:#fffbeb' : '';
-      $editBtn = '<a href="#" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
-               . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
-               . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false" title="метка/заметка">✏️</a>';
-      $btnHtml = '<a class="btn sm primary" href="https://' . $WSS_HOST . '/wsterm?port=' . (int) $e['port'] . '" target="_blank">🖥 Терминал</a>'
-               . ' <a class="btn sm sky" href="?rdp=' . (int) $e['port'] . '" title="скачать .rdp">🖥️ RDP</a>'
-               . ' <a class="btn sm" href="#" onclick="openProcs(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="диспетчер задач">📊 Процессы</a>'
-               . ' <a class="btn sm" href="?shadow=' . (int) $e['port'] . '" title="совместный экран">👥 Тень</a>'
-               . ' <a class="btn sm" href="#" onclick="openSvc(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="службы">⚙ Службы</a>'
-               . ' <a class="btn sm" href="#" onclick="openEvents(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="журнал событий Windows">📋 События</a>'
-               . ' <a class="btn sm" href="#" onclick="openScreen(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="экран в браузере">🖼 Экран</a>'
-               . ' <a class="btn sm" href="#" onclick="openPower(event, ' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="питание">⏻ Питание</a>'
-               . ' <a class="btn sm" href="#" onclick="openFiles(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="файлы машины">📁 Файлы</a>'
-               . ' <a class="btn sm copy" href="#" onclick="copyCmd(' . htmlspecialchars(json_encode($cmd)) . ', this);return false">⧉ команда</a>';
-      printf(
-          '<tr data-search="%s" data-host="%s" data-problems="%d" style="%s"><td><input type="checkbox" name="sel[]" value="%d"></td>'
-          . '<td><span class="dot"></span><span class="mname">%s</span>%s%s</td>'
-          . '<td><span class="role-pill role-%s">%s</span></td>'
-          . '<td><b>%d</b></td>'
-          . '<td class="btnrow">%s</td>'
-          . '<td class="ago">%s</td></tr>' . "\n",
-          htmlspecialchars($search),
-          htmlspecialchars($e['host']),
-          count($probs),
-          $rowStyle,
-          (int) $e['port'],
-          htmlspecialchars($dispName),
-          $metaHtml,
-          $editBtn,
-          $e['role'],
-          $e['role'] === 'admin' ? 'админ' : 'пользователь',
-          (int) $e['port'],
-          $btnHtml,
-          htmlspecialchars($seen)
-      );
-  }
-  ?>
-  </table>
+<?php
+$M = [];
+foreach ($active as $e) {
+    $sec = $sysNow - $e['ts'];
+    $seen = $sec < 5 ? 'только что' : $sec . ' с назад';
+    $cmd = "ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@{$GLOBALS['RELAY']} -p {$e['port']} anyuser@localhost";
+    $alias = $e['alias'];
+    $probs = [];
+    if ($e['disk'] !== null && $e['disk'] < 5) { $probs[] = '🔴 диск C: ' . (int) $e['disk'] . ' ГБ'; }
+    if ($e['upt'] !== null && $e['upt'] > 5) { $probs[] = '⏰ аптайм ' . $e['upt'] . ' дн'; }
+    $avProd = null; $avState = null;
+    $avf = sprintf('%s/inv_%d.json', $PRIVATE, (int) $e['port']);
+    if (is_file($avf)) {
+        $avj = json_decode((string) file_get_contents($avf), true);
+        $av = $avj['data']['antivirus'] ?? null;
+        if ($av) { $avProd = (string) $av['product']; $avState = (string) $av['state']; }
+        if ($av && mb_strtolower($avState) !== 'running' && mb_strpos($avProd, 'не обнаружен') === false) {
+            $probs[] = '⚠️ AV: ' . $avProd . ' ' . $avState;
+        }
+    }
+    $dispName = ($alias !== null && $alias['name'] !== '') ? $alias['name'] : $e['host'];
+    $search = mb_strtolower($dispName . ' ' . $e['host'] . ' ' . ($e['user'] ?? '') . ' ' . $e['role']);
+    $editBtn = '<a href="#" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
+             . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
+             . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false" title="метка/заметка">✏️</a>';
+    $btnHtml = '<a class="btn primary" href="https://' . $WSS_HOST . '/wsterm?port=' . (int) $e['port'] . '" target="_blank">🖥 Терминал</a>'
+             . '<a class="btn" href="#" onclick="openScreen(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="экран в браузере">🖼 Экран</a>'
+             . '<a class="btn" href="#" onclick="openFiles(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="файлы машины">📁 Файлы</a>'
+             . '<a class="btn sky" href="?rdp=' . (int) $e['port'] . '" title="скачать .rdp">🖥️ RDP</a>'
+             . '<a class="btn" href="?shadow=' . (int) $e['port'] . '" title="совместный экран">👥 Тень</a>'
+             . '<a class="btn" href="#" onclick="openSvc(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="службы">⚙ Службы</a>'
+             . '<a class="btn" href="#" onclick="openProcs(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="диспетчер задач">📊 Процессы</a>'
+             . '<a class="btn" href="#" onclick="openEvents(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="журнал событий Windows">📋 События</a>'
+             . '<a class="btn amber" href="#" onclick="openPower(event, ' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="питание">⏻ Питание</a>';
+    $M[] = [
+        'port' => (int) $e['port'], 'host' => $e['host'], 'name' => $dispName,
+        'seen' => $seen, 'role' => $e['role'], 'roleLabel' => $e['role'] === 'admin' ? 'админ' : 'пользователь',
+        'search' => $search, 'probs' => count($probs), 'probsTxt' => implode(' · ', $probs),
+        'rowStyle' => $probs ? 'background:#fffbeb' : '',
+        'editBtn' => $editBtn, 'btnHtml' => $btnHtml, 'cmd' => $cmd,
+        'user' => $e['user'] ?? '', 'osv' => $e['osv'] ?? '',
+        'disk' => $e['disk'] ?? null, 'ram' => $e['ram'] ?? null, 'upt' => $e['upt'] ?? null,
+        'ver' => $e['ver'] ?? '', 'verOk' => $e['verOk'] ?? false,
+        'avProd' => $avProd, 'avState' => $avState,
+        'aliasNote' => ($alias !== null && $alias['note'] !== '') ? $alias['note'] : '',
+    ];
+}
+$selPort = isset($_GET['m']) ? (int) $_GET['m'] : 0;
+$selRow = null;
+foreach ($M as $r) { if ($r['port'] === $selPort) { $selRow = $r; break; } }
+if ($selRow === null && $M) { $selRow = $M[0]; }
+?>
+  <div class="md" id="mdwrap">
+    <div class="mdlist" id="mdlist">
+<?php if (!$M): ?>
+      <div class="empty">Нет активных машин — запустите portassh.exe на целевом компьютере</div>
+<?php endif; ?>
+<?php foreach ($M as $r): ?>
+      <div class="mditem<?= $selRow !== null && $r['host'] === $selRow['host'] ? ' sel' : '' ?>" data-search="<?= htmlspecialchars($r['search']) ?>" data-host="<?= htmlspecialchars($r['host']) ?>" data-problems="<?= $r['probs'] ?>" style="<?= $r['rowStyle'] ?>" onclick="return selectHost(<?= htmlspecialchars(json_encode($r['host'])) ?>, <?= $r['port'] ?>)">
+        <input type="checkbox" name="sel[]" value="<?= $r['port'] ?>" title="выбрать для broadcast" onclick="event.stopPropagation()">
+        <span class="dot"></span>
+        <span class="mdname"><?= htmlspecialchars($r['name']) ?></span>
+        <span class="role-pill role-<?= $r['role'] ?>"><?= $r['roleLabel'] ?></span>
+        <span class="mdsub">порт <?= $r['port'] ?> · <?= htmlspecialchars($r['seen']) ?><?= $r['probsTxt'] !== '' ? ' · ' . htmlspecialchars($r['probsTxt']) : '' ?></span>
+      </div>
+<?php endforeach; ?>
+    </div>
+    <div class="mdpane" id="mdpane" data-host="<?= $selRow ? htmlspecialchars($selRow['host']) : '' ?>">
+<?php if ($selRow): ?>
+      <div class="mhead2">
+        <span class="dot"></span>
+        <div class="mhead2t">
+          <div class="mname-lg"><?= htmlspecialchars($selRow['name']) ?> <?= $selRow['editBtn'] ?></div>
+          <div class="mdsub"><?= htmlspecialchars($selRow['host']) ?> · порт <?= $selRow['port'] ?> · <?= htmlspecialchars($selRow['seen']) ?></div>
+        </div>
+        <a class="mdback" href="#" onclick="document.getElementById('mdwrap').classList.remove('mobile-pane');return false">← Назад</a>
+      </div>
+<?php
+      $diskV = $selRow['disk']; $ramV = $selRow['ram']; $uptV = $selRow['upt'];
+      $diskCls = $diskV === null ? '' : ($diskV < 5 ? 'bad' : ($diskV < 20 ? 'warn' : 'ok'));
+      $ramCls = $ramV === null ? '' : ($ramV >= 92 ? 'bad' : ($ramV >= 80 ? 'warn' : 'ok'));
+      $ramBar = $ramCls === 'bad' ? 'var(--red)' : ($ramCls === 'warn' ? 'var(--amber)' : 'var(--green)');
+      $uptCls = $uptV === null ? '' : ($uptV > 5 ? 'warn' : 'ok');
+      $avBad = $selRow['avProd'] !== null && mb_strtolower($selRow['avState']) !== 'running' && mb_strpos($selRow['avProd'], 'не обнаружен') === false;
+?>
+      <div class="sect">Состояние</div>
+      <div class="kv">
+        <div class="kvrow"><span class="k">Диск C:</span><span class="v <?= $diskCls ?>"><?= $diskV !== null ? $diskV . ' ГБ свободно' : '—' ?></span></div>
+        <div class="kvrow"><span class="k">Память</span><span class="v <?= $ramCls ?>"><?= $ramV !== null ? '<span class="meter"><i style="width:' . (int) $ramV . '%;background:' . $ramBar . '"></i></span>' . (int) $ramV . '%' : '—' ?></span></div>
+        <div class="kvrow"><span class="k">Аптайм</span><span class="v <?= $uptCls ?>"><?= $uptV !== null ? $uptV . ' ' . ($uptCls === 'warn' ? 'дн ⚠️' : 'дн') : '—' ?></span></div>
+        <div class="kvrow"><span class="k">Антивирус</span><span class="v <?= $avBad ? 'bad' : '' ?>"><?= $selRow['avProd'] !== null ? htmlspecialchars($selRow['avProd']) . ' · ' . htmlspecialchars($selRow['avState']) : 'нет данных · <a href="#" onclick="invFetch(' . $selRow['port'] . ');return false">🔄 обновить инвентарь</a>' ?></span></div>
+      </div>
+      <div class="sect">Система</div>
+      <div class="kv">
+        <div class="kvrow"><span class="k">ОС</span><span class="v">Windows<?= $selRow['osv'] !== '' ? ' · сборка ' . htmlspecialchars($selRow['osv']) : '' ?></span></div>
+        <div class="kvrow"><span class="k">Пользователь</span><span class="v"><?= $selRow['user'] !== '' ? htmlspecialchars($selRow['user']) : '—' ?></span></div>
+        <div class="kvrow"><span class="k">portassh</span><span class="v"><?= $selRow['ver'] !== '' ? ($selRow['verOk'] ? '<span class="chip ver-ok">ver. ' . htmlspecialchars($selRow['ver']) . ' · актуальна</span>' : ($LATEST_NAME !== '' ? '<span class="chip ver-old">устарела → ver. ' . htmlspecialchars($LATEST_NAME) . '</span>' : '<span class="chip">ver. ' . htmlspecialchars($selRow['ver']) . '</span>')) : '—' ?></span></div>
+      </div>
+      <?php if ($selRow['aliasNote'] !== ''): ?><div class="note">📝 <?= htmlspecialchars($selRow['aliasNote']) ?></div><?php endif; ?>
+      <div class="actgrid"><?= $selRow['btnHtml'] ?></div>
+      <div class="cmdbox"><code class="cmd"><?= htmlspecialchars($selRow['cmd']) ?></code>
+        <a class="btn sm copy" href="#" onclick="copyCmd(<?= htmlspecialchars(json_encode($selRow['cmd'])) ?>, this);return false">⧉ Копировать SSH-команду</a></div>
+<?php else: ?>
+      <div class="empty">Выберите машину слева</div>
+<?php endif; ?>
+    </div>
+  </div>
 <script>
 <?php foreach ($active as $e) { if (isset($e['ram']) && $e['ram'] !== null && $e['ram'] > 92) { echo "ramWatch(" . json_encode($e['host']) . ", " . (int) $e['ram'] . ");\n"; } } ?>
+let selHost = <?= json_encode($selRow ? $selRow['host'] : '') ?>;
+function highlightSel() {
+  document.querySelectorAll('.mditem').forEach(i => i.classList.toggle('sel', i.getAttribute('data-host') === selHost));
+}
+function selectHost(host, port) {
+  selHost = host;
+  highlightSel();
+  if (window.matchMedia('(max-width: 700px)').matches) document.getElementById('mdwrap').classList.add('mobile-pane');
+  const url = new URL(location.href);
+  url.searchParams.set('m', port);
+  history.replaceState(null, '', url);
+  refreshPane(url.toString());
+  return false;
+}
+async function refreshPane(url) {
+  try {
+    const res = await fetch(url || location.href);
+    if (!res.ok) return;
+    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+    const np = doc.querySelector('#mdpane');
+    const cp = document.querySelector('#mdpane');
+    if (np && cp) cp.innerHTML = np.innerHTML;
+  } catch (e) {}
+}
 function ramWatch(host, ram) {
   const k = 'ramhist_' + host;
   let h = [];
@@ -861,28 +1074,29 @@ function ramWatch(host, ram) {
   if (h.length > 3) h = h.slice(-3);
   localStorage.setItem(k, JSON.stringify(h));
   if (h.length === 3 && h.every(v => v > 92)) {
-    const tr = document.querySelector('tr[data-host="' + host + '"]');
-    if (!tr || tr.querySelector('.prob-a')) return;
+    const item = document.querySelector('.mditem[data-host="' + host + '"]');
+    if (!item || item.querySelector('.prob-a')) return;
     const chip = document.createElement('span');
     chip.className = 'chip prob-a';
     chip.textContent = '🟠 RAM > 92% (3 проверки)';
-    const meta = tr.querySelector('.meta');
-    if (meta) meta.append(chip);
-    tr.setAttribute('data-problems', String((parseInt(tr.getAttribute('data-problems') || '0') || 0) + 1));
-    tr.style.background = '#fffbeb';
+    const pane = document.querySelector('#mdpane[data-host="' + host + '"]');
+    const kv = pane ? pane.querySelector('.kv') : null;
+    if (kv) { chip.style.gridColumn = '1 / -1'; kv.append(chip); }
+    item.setAttribute('data-problems', String((parseInt(item.getAttribute('data-problems') || '0') || 0) + 1));
+    item.style.background = '#fffbeb';
   }
 }
 (function updateProbBtn() {
-  const n = document.querySelectorAll('tr[data-problems]:not([data-problems="0"])').length;
+  const n = document.querySelectorAll('.mditem[data-problems]:not([data-problems="0"])').length;
   const btn = document.getElementById('probbtn');
   if (n > 0) { btn.style.display = ''; btn.textContent = '👁 Только с проблемами (' + n + ')'; }
 })();
 let showProblemsOnly = false;
 function toggleProblems() {
   showProblemsOnly = !showProblemsOnly;
-  document.querySelectorAll('tr[data-search]').forEach(tr => {
-    const p = parseInt(tr.getAttribute('data-problems') || '0');
-    tr.style.display = (showProblemsOnly && p === 0) ? 'none' : '';
+  document.querySelectorAll('.mditem[data-search]').forEach(it => {
+    const p = parseInt(it.getAttribute('data-problems') || '0');
+    it.style.display = (showProblemsOnly && p === 0) ? 'none' : '';
   });
 }
 </script>
@@ -1208,11 +1422,12 @@ document.querySelectorAll('.pmi').forEach(el => {
         <a href="#" onclick="closeScreen();return false" style="color:#e8eefc;text-decoration:none;font-size:18px">✕</a>
       </div>
     </div>
-    <img id="scrimg" draggable="false" style="max-width:100%;max-height:calc(100vh - 80px);cursor:crosshair;border:1px solid #2a3040;border-radius:8px;user-select:none" onmousedown="scrPress(event)" onmouseup="scrRelease(event)" onclick="scrClick(event, false)" ondblclick="scrClick(event, true)" oncontextmenu="scrRClick(event)">
+    <canvas id="scrimg" width="1280" height="720" style="max-width:100%;max-height:calc(100vh - 80px);cursor:crosshair;border:1px solid #2a3040;border-radius:8px;user-select:none;object-fit:contain" onmousedown="scrPress(event)" onmouseup="scrRelease(event)" onclick="scrClick(event, false)" ondblclick="scrClick(event, true)" oncontextmenu="scrRClick(event)"></canvas>
   </div>
 </div>
 <script>
 let scrPort = 0, scrTimer = null, scrBusy = false, scrDrag = false, scrLastMove = 0, scrWheelAcc = 0, scrWheelSent = true;
+let scrWs = null, scrLive = false, scrPing = null;
 document.addEventListener('mousemove', scrMove);
 document.addEventListener('mouseup', scrRelease);
 document.addEventListener('wheel', e => {
@@ -1231,12 +1446,44 @@ function openScreen(port, host) {
   scrPort = port;
   document.getElementById('scrhost').textContent = host;
   document.getElementById('scrmodal').style.display = 'block';
+  scrLive = false;
+  scrWsConnect();
   fetchFrame();
   if (scrTimer) clearInterval(scrTimer);
   scrTimer = setInterval(fetchFrame, 1500);
 }
-function closeScreen() { clearInterval(scrTimer); scrTimer = null; document.getElementById('scrmodal').style.display = 'none'; }
+function closeScreen() {
+  clearInterval(scrTimer); scrTimer = null;
+  if (scrPing) { clearInterval(scrPing); scrPing = null; }
+  if (scrWs) { try { scrWs.close(); } catch (e) {} scrWs = null; }
+  document.getElementById('scrmodal').style.display = 'none';
+}
+// WS-режим: живые кадры с relay, ввод через тот же WS; при сбое остаётся старый поллинг
+function scrWsConnect() {
+  const tok = (SCR_TOKS || {})[String(scrPort)];
+  if (!tok) return;
+  try {
+    scrWs = new WebSocket('wss://' + location.host + '/hbdws/screenws?port=' + scrPort + '&t=' + tok);
+  } catch (err) { return; }
+  scrWs.binaryType = 'arraybuffer';
+  scrWs.onmessage = ev => {
+    if (typeof ev.data === 'string') return;
+    if (!scrLive) {
+      scrLive = true;
+      if (scrTimer) { clearInterval(scrTimer); scrTimer = null; }
+    }
+    createImageBitmap(new Blob([ev.data], { type: 'image/jpeg' })).then(bm => {
+      const c = scrImg();
+      if (c.width !== bm.width || c.height !== bm.height) { c.width = bm.width; c.height = bm.height; }
+      c.getContext('2d').drawImage(bm, 0, 0);
+    });
+  };
+  scrWs.onclose = () => { scrWs = null; if (!scrModalClosed()) scrWsConnect(); };
+  scrWs.onerror = () => {};
+  scrPing = setInterval(() => { if (scrWs && scrWs.readyState === 1) scrWs.send('ping'); }, 3000);
+}
 function fetchFrame() {
+  if (scrLive) return; // живой поток идёт
   if (scrBusy) return;
   scrBusy = true;
   fetch('?screen=' + scrPort).then(r => { if (!r.ok) throw 0; return r.blob(); })
@@ -1247,11 +1494,12 @@ function scrImg() { return document.getElementById('scrimg'); }
 function scrCoords(e) {
   const img = scrImg();
   const r = img.getBoundingClientRect();
-  const x = Math.round((e.clientX - r.left) * (img.naturalWidth || r.width) / r.width);
-  const y = Math.round((e.clientY - r.top) * (img.naturalHeight || r.height) / r.height);
+  const x = Math.round((e.clientX - r.left) * img.width / r.width);
+  const y = Math.round((e.clientY - r.top) * img.height / r.height);
   return x + ' ' + y;
 }
 function scrSendLine(line) {
+  if (scrLive && scrWs && scrWs.readyState === 1) { scrWs.send(line); return; }
   fetch('?input=' + scrPort + '&line=' + encodeURIComponent(line), {method: 'POST'});
 }
 function scrClick(e, dbl) { scrSendLine((dbl ? 'dbl ' : 'click ') + scrCoords(e)); }
@@ -1735,33 +1983,35 @@ async function doAjaxRefresh() {
     const curCards = document.querySelector('.cards');
     if (newCards && curCards) curCards.innerHTML = newCards.innerHTML;
 
-    // 3. Таблица машин с сохранением отмеченных чекбоксов
-    const curTable = document.querySelector('#tab-machines table');
-    const newTable = doc.querySelector('#tab-machines table');
-    if (curTable && newTable) {
+    // 3. Список машин (мастер) с сохранением отмеченных чекбоксов
+    const curList = document.querySelector('#mdlist');
+    const newList = doc.querySelector('#mdlist');
+    if (curList && newList) {
       const checkedSet = new Set(
-        Array.from(curTable.querySelectorAll('input[name="sel[]"]:checked')).map(cb => cb.value)
+        Array.from(curList.querySelectorAll('input[name="sel[]"]:checked')).map(cb => cb.value)
       );
-      curTable.innerHTML = newTable.innerHTML;
-      if (checkedSet.size > 0) {
-        curTable.querySelectorAll('input[name="sel[]"]').forEach(cb => {
-          if (checkedSet.has(cb.value)) cb.checked = true;
-        });
-      }
-
-      // Применяем текущий поисковый фильтр
+      curList.innerHTML = newList.innerHTML;
+      curList.querySelectorAll('input[name="sel[]"]').forEach(cb => {
+        if (checkedSet.has(cb.value)) cb.checked = true;
+      });
       const qInput = document.getElementById('q');
       if (qInput && qInput.value) {
         filterRows(qInput.value);
       }
       if (typeof showProblemsOnly !== 'undefined' && showProblemsOnly) {
-        document.querySelectorAll('tr[data-search]').forEach(tr => {
-          const p = parseInt(tr.getAttribute('data-problems') || '0');
-          tr.style.display = (p === 0) ? 'none' : '';
+        document.querySelectorAll('.mditem[data-search]').forEach(it => {
+          const p = parseInt(it.getAttribute('data-problems') || '0');
+          it.style.display = (p === 0) ? 'none' : '';
         });
       }
       if (typeof updateProbBtn === 'function') updateProbBtn();
+      if (typeof highlightSel === 'function') highlightSel();
     }
+
+    // 3b. Панель выбранной машины (деталь)
+    const curPane = document.querySelector('#mdpane');
+    const newPane = doc.querySelector('#mdpane');
+    if (curPane && newPane) curPane.innerHTML = newPane.innerHTML;
 
     // 4. Инвентарь (только если поиск по инвентарю не активен)
     const invQ = document.getElementById('invq');
@@ -1815,8 +2065,32 @@ window.addEventListener('DOMContentLoaded', () => {
   // 3. Загружаем полный список моделей OpenRouter
   aiFetchConfig();
 
-  // 4. Запускаем периодическую AJAX-синхронизацию каждые 15 секунд
-  setInterval(doAjaxRefresh, 15000);
+  // 4. Запускаем периодическую AJAX-синхронизацию каждые 25 секунд
+  setInterval(doAjaxRefresh, 25000);
+
+  // 5. Живая шина событий Server-Sent Events (SSE) для мгновенного обновления
+  if (window.EventSource) {
+    try {
+      const sse = new EventSource('?sse=1');
+      sse.addEventListener('heartbeat', ev => {
+        try {
+          const d = JSON.parse(ev.data);
+          if (d && d.host) {
+            const row = document.querySelector(`.mditem[data-host="${d.host}"]`);
+            if (row) {
+              const sub = row.querySelector('.mdsub');
+              if (sub) {
+                const ramTxt = (d.ram !== undefined && d.ram >= 0) ? ` · ОЗУ ${d.ram}%` : '';
+                sub.textContent = `порт ${d.port} · только что${ramTxt}`;
+              }
+            }
+            const syncEl = document.getElementById('syncstatus');
+            if (syncEl) syncEl.innerHTML = '<span style="color:#10b981;font-weight:600">● Live SSE ' + new Date().toLocaleTimeString() + '</span>';
+          }
+        } catch(e) {}
+      });
+    } catch(e) {}
+  }
 });
 </script>
 

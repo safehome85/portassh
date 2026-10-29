@@ -7,6 +7,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -21,9 +24,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	sftp "github.com/pkg/sftp"
 	ssh "golang.org/x/crypto/ssh"
 )
+
+var upgrader = websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096}
+
 
 const (
 	listen    = "127.0.0.1:8898"
@@ -41,7 +48,136 @@ var (
 	hbMu    sync.Mutex
 	hbCount int
 	inputQ  = map[int][]string{}
+
+	inputWaitersMu sync.Mutex
+	inputWaiters   = make(map[int]chan struct{})
 )
+
+// In-memory Fleet state store
+type FleetMachine struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Role     string `json:"role"`
+	Time     string `json:"t"`
+	User     string `json:"user,omitempty"`
+	OS       string `json:"os,omitempty"`
+	DiskGB   int    `json:"disk"`
+	RAMLoad  int    `json:"ram"`
+	Uptime   int    `json:"upt"`
+	Version  string `json:"ver,omitempty"`
+	LastSeen int64  `json:"ts"`
+}
+
+var (
+	fleetMu    sync.RWMutex
+	fleetState = make(map[string]*FleetMachine)
+
+	sseMu      sync.Mutex
+	sseClients = make(map[chan []byte]struct{})
+)
+
+func broadcastSSE(event string, data interface{}) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	msg := []byte(fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(b)))
+	sseMu.Lock()
+	defer sseMu.Unlock()
+	for ch := range sseClients {
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+}
+
+func notifyInputWaiter(port int) {
+	inputWaitersMu.Lock()
+	if ch, ok := inputWaiters[port]; ok {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	inputWaitersMu.Unlock()
+}
+
+// SSH Connection Pool: multiplexed sessions across long-lived ssh.Client
+type pooledSSHClient struct {
+	client   *ssh.Client
+	lastUsed time.Time
+}
+
+var (
+	sshPoolMu sync.Mutex
+	sshPool   = make(map[int]*pooledSSHClient)
+)
+
+const sshPoolTTL = 45 * time.Second
+
+func initSSHPoolReaper() {
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			sshPoolMu.Lock()
+			now := time.Now()
+			for port, entry := range sshPool {
+				if now.Sub(entry.lastUsed) > sshPoolTTL {
+					_ = entry.client.Close()
+					delete(sshPool, port)
+				}
+			}
+			sshPoolMu.Unlock()
+		}
+	}()
+}
+
+func dialTargetSSH(port int) (*ssh.Client, error) {
+	if clientSigner == nil || clientHostPub == nil {
+		return nil, fmt.Errorf("client key not configured")
+	}
+	sshPoolMu.Lock()
+	if entry, ok := sshPool[port]; ok {
+		entry.lastUsed = time.Now()
+		sshPoolMu.Unlock()
+		return entry.client, nil
+	}
+	sshPoolMu.Unlock()
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	cc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
+		User:              "anyuser",
+		Auth:              []ssh.AuthMethod{ssh.PublicKeys(clientSigner)},
+		HostKeyCallback:   ssh.FixedHostKey(clientHostPub),
+		HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
+		Timeout:           5 * time.Second,
+	})
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	cl := ssh.NewClient(cc, chans, reqs)
+
+	sshPoolMu.Lock()
+	sshPool[port] = &pooledSSHClient{client: cl, lastUsed: time.Now()}
+	sshPoolMu.Unlock()
+	return cl, nil
+}
+
+func dropTargetSSH(port int, cl *ssh.Client) {
+	sshPoolMu.Lock()
+	if entry, ok := sshPool[port]; ok && (cl == nil || entry.client == cl) {
+		_ = entry.client.Close()
+		delete(sshPool, port)
+	}
+	sshPoolMu.Unlock()
+}
 
 // allowlist: /home/portassh/allowed-hosts.txt — по одному хостнейму на строку.
 // Пустой/отсутствующий файл = принимать всех (обратная совместимость).
@@ -66,14 +202,14 @@ func isHostAllowed(host string) bool {
 		if b, err := os.ReadFile("/home/portassh/allowed-hosts.txt"); err == nil {
 			for _, l := range strings.Split(string(b), "\n") {
 				if h := strings.TrimSpace(l); h != "" {
-					m[h] = true
+					m[strings.ToLower(h)] = true
 				}
 			}
 		}
 		allowedCache = m
 		allowedMtime = stat.ModTime()
 	}
-	allowed := len(allowedCache) == 0 || allowedCache[host]
+	allowed := len(allowedCache) == 0 || allowedCache[strings.ToLower(host)]
 	allowedMu.Unlock()
 
 	if !allowed {
@@ -118,41 +254,30 @@ func valid(line string) bool {
 
 // inventoryHandler: снимает подсистему "info" цели и отдаёт её JSON.
 func inventoryHandler(w http.ResponseWriter, r *http.Request) {
-	if clientSigner == nil || clientHostPub == nil {
-		http.Error(w, "client key not configured", 500)
-		return
-	}
 	port, err := strconv.Atoi(r.URL.Query().Get("port"))
 	if err != nil || port < 1024 {
 		http.Error(w, "bad port", 400)
 		return
 	}
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	client, err := dialTargetSSH(port)
 	if err != nil {
 		http.Error(w, "target unreachable: "+err.Error(), 502)
 		return
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(20 * time.Second))
-	cc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
-		User:              "anyuser",
-		Auth:              []ssh.AuthMethod{ssh.PublicKeys(clientSigner)},
-		HostKeyCallback:   ssh.FixedHostKey(clientHostPub),
-		HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
-		Timeout:           5 * time.Second,
-	})
-	if err != nil {
-		http.Error(w, "ssh: "+err.Error(), 502)
-		return
-	}
-	defer cc.Close()
-	client := ssh.NewClient(cc, chans, reqs)
-	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {
-		http.Error(w, "session: "+err.Error(), 502)
-		return
+		dropTargetSSH(port, client)
+		client, err = dialTargetSSH(port)
+		if err != nil {
+			http.Error(w, "target unreachable: "+err.Error(), 502)
+			return
+		}
+		session, err = client.NewSession()
+		if err != nil {
+			dropTargetSSH(port, client)
+			http.Error(w, "session: "+err.Error(), 502)
+			return
+		}
 	}
 	defer session.Close()
 	stdout, err := session.StdoutPipe()
@@ -208,6 +333,7 @@ func screenHandler(w http.ResponseWriter, r *http.Request) {
 		fh, _ := strconv.Atoi(r.URL.Query().Get("h"))
 		screenFrames[port] = screenFrame{jpg: body, w: fw, h: fh, ts: time.Now().Unix()}
 		fmt.Fprint(w, "ok")
+		fanOutScreen(port, body)
 		return
 	}
 	fr, ok := screenFrames[port]
@@ -228,22 +354,45 @@ func inputHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad port", 400)
 		return
 	}
-	screenMu.Lock()
-	defer screenMu.Unlock()
-	if r.Method == "GET" {
-		lastViewer[port] = time.Now().Unix()
-	}
 	if r.Method == "POST" {
 		body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
 		line := strings.TrimSpace(string(body))
 		if line != "" {
+			screenMu.Lock()
 			inputQ[port] = append(inputQ[port], line)
+			screenMu.Unlock()
+			notifyInputWaiter(port)
 		}
 		fmt.Fprint(w, "ok")
 		return
 	}
+
+	screenMu.Lock()
+	lastViewer[port] = time.Now().Unix()
+
+	// Long-polling: если указан wait=1 и в очереди пусто — ждём до 25 секунд
+	if r.URL.Query().Get("wait") == "1" && len(inputQ[port]) == 0 {
+		ch := make(chan struct{}, 1)
+		inputWaitersMu.Lock()
+		inputWaiters[port] = ch
+		inputWaitersMu.Unlock()
+
+		screenMu.Unlock()
+		select {
+		case <-ch:
+		case <-time.After(25 * time.Second):
+		case <-r.Context().Done():
+		}
+		screenMu.Lock()
+
+		inputWaitersMu.Lock()
+		delete(inputWaiters, port)
+		inputWaitersMu.Unlock()
+	}
+
 	lines := inputQ[port]
 	delete(inputQ, port)
+	screenMu.Unlock()
 	fmt.Fprint(w, strings.Join(lines, "\n"))
 }
 
@@ -260,38 +409,146 @@ func viewerHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "yes")
 		return
 	}
-	if time.Now().Unix()-lastViewer[port] < 5 {
+	liveMu.Lock()
+	hasLive := len(liveSubs[port]) > 0
+	liveMu.Unlock()
+	if time.Now().Unix()-lastViewer[port] < 8 || hasLive {
 		fmt.Fprint(w, "yes")
 		return
 	}
 	fmt.Fprint(w, "no")
 }
 
+// --- live screen: WebSocket-хаб (кадры exe фан-аутом зриителям, ввод обратно) ---
+
+var (
+	liveMu     sync.Mutex
+	liveSubs   = map[int]map[chan []byte]struct{}{}
+	dashSecret = []byte("")
+)
+
+// scrToken: sha256("scr|<secret>|<port>|<час UTC>")[:32 hex]; принимаем текущий и предыдущий час.
+func scrToken(secret []byte, port int, bucket string) string {
+	h := sha256.Sum256([]byte("scr|" + string(secret) + "|" + strconv.Itoa(port) + "|" + bucket))
+	return hex.EncodeToString(h[:])[:32]
+}
+
+func scrTokValid(t string, port int) bool {
+	if len(dashSecret) == 0 || len(t) != 32 {
+		return false
+	}
+	now := time.Now().UTC().Format("2006010215")
+	prev := time.Now().UTC().Add(-time.Hour).Format("2006010215")
+	ok := subtle.ConstantTimeCompare([]byte(t), []byte(scrToken(dashSecret, port, now))) == 1 ||
+		subtle.ConstantTimeCompare([]byte(t), []byte(scrToken(dashSecret, port, prev))) == 1
+	return ok
+}
+
+func screenWSHandler(w http.ResponseWriter, r *http.Request) {
+	port, err := strconv.Atoi(r.URL.Query().Get("port"))
+	if err != nil || port < 1024 {
+		http.Error(w, "bad port", 400)
+		return
+	}
+	if !scrTokValid(r.URL.Query().Get("t"), port) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	sub := make(chan []byte, 8)
+	liveMu.Lock()
+	if liveSubs[port] == nil {
+		liveSubs[port] = map[chan []byte]struct{}{}
+	}
+	liveSubs[port][sub] = struct{}{}
+	liveMu.Unlock()
+	screenMu.Lock()
+	lastViewer[port] = time.Now().Unix()
+	screenMu.Unlock()
+
+	done := make(chan struct{})
+	// чтение: пинги и строки ввода
+	go func() {
+		defer close(done)
+		for {
+			mt, msg, err := ws.ReadMessage()
+			if err != nil {
+				return
+			}
+			if mt == websocket.TextMessage {
+				screenMu.Lock()
+				lastViewer[port] = time.Now().Unix()
+				line := strings.TrimSpace(string(msg))
+				if line != "" && line != "ping" {
+					inputQ[port] = append(inputQ[port], line)
+					notifyInputWaiter(port)
+				}
+				screenMu.Unlock()
+			}
+		}
+	}()
+	// запись: кадры из подписки
+	go func() {
+		pt := time.NewTicker(10 * time.Second)
+		defer pt.Stop()
+		for {
+			select {
+			case jpg := <-sub:
+				if err := ws.WriteMessage(websocket.BinaryMessage, jpg); err != nil {
+					return
+				}
+			case <-pt.C:
+				if err := ws.WriteMessage(websocket.TextMessage, []byte("ping")); err != nil {
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	<-done
+	liveMu.Lock()
+	delete(liveSubs[port], sub)
+	liveMu.Unlock()
+	ws.Close()
+}
+
+// fanOutScreen: разослать новый кадр живым зрителям (медленных отключаем).
+func fanOutScreen(port int, jpg []byte) {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	for ch := range liveSubs[port] {
+		select {
+		case ch <- jpg:
+		default: // подписчик не успевает — пропускаем кадр
+		}
+	}
+}
+
+
 // sftpFor: SFTP-клиент цели (пути относительно домашней папки пользователя).
 func sftpFor(port int) (*sftp.Client, func(), error) {
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	client, err := dialTargetSSH(port)
 	if err != nil {
 		return nil, nil, err
 	}
-	cc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
-		User:              "anyuser",
-		Auth:              []ssh.AuthMethod{ssh.PublicKeys(clientSigner)},
-		HostKeyCallback:   ssh.FixedHostKey(clientHostPub),
-		HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
-		Timeout:           5 * time.Second,
-	})
-	if err != nil {
-		conn.Close()
-		return nil, nil, err
-	}
-	client := ssh.NewClient(cc, chans, reqs)
 	sc, err := sftp.NewClient(client)
 	if err != nil {
-		client.Close()
-		return nil, nil, err
+		dropTargetSSH(port, client)
+		client, err = dialTargetSSH(port)
+		if err != nil {
+			return nil, nil, err
+		}
+		sc, err = sftp.NewClient(client)
+		if err != nil {
+			dropTargetSSH(port, client)
+			return nil, nil, err
+		}
 	}
-	cleanup := func() { sc.Close(); client.Close() }
+	cleanup := func() { _ = sc.Close() }
 	return sc, cleanup, nil
 }
 
@@ -413,7 +670,7 @@ func getFileHandler(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, f)
 }
 
-// broadcastHandler: параллельный exec на целях через их форвардинги.
+// broadcastHandler: параллельный exec на целях через их форвардинги с динамическим worker-пулом.
 func broadcastHandler(w http.ResponseWriter, r *http.Request) {
 	if clientSigner == nil || clientHostPub == nil {
 		http.Error(w, "client key not configured", 500)
@@ -438,10 +695,14 @@ func broadcastHandler(w http.ResponseWriter, r *http.Request) {
 	results := make(map[int]res, len(ports))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	// динамический worker pool (макс. 32 параллельных запроса)
+	sem := make(chan struct{}, 32)
 	for _, p := range ports {
 		wg.Add(1)
 		go func(p int) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			code, out := execOnTarget(p, cmd)
 			mu.Lock()
 			results[p] = res{Code: code, Out: out}
@@ -453,31 +714,28 @@ func broadcastHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(results)
 }
 
-// execOnTarget: одна команда на цель (через её пул/exec), 20 с таймаут.
+// execOnTarget: одна команда на цель через пул постоянных SSH-соединений (20 с таймаут).
 func execOnTarget(port int, cmd string) (int, string) {
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	client, err := dialTargetSSH(port)
 	if err != nil {
 		return -1, "машина недоступна: " + err.Error()
 	}
-	cc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
-		User:              "anyuser",
-		Auth:              []ssh.AuthMethod{ssh.PublicKeys(clientSigner)},
-		HostKeyCallback:   ssh.FixedHostKey(clientHostPub),
-		HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
-		Timeout:           5 * time.Second,
-	})
-	if err != nil {
-		conn.Close()
-		return -1, "ssh: " + err.Error()
-	}
-	client := ssh.NewClient(cc, chans, reqs)
-	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {
-		return -1, "session: " + err.Error()
+		// при обрыве туннеля — сбрасываем и повторяем один раз
+		dropTargetSSH(port, client)
+		client, err = dialTargetSSH(port)
+		if err != nil {
+			return -1, "машина недоступна: " + err.Error()
+		}
+		session, err = client.NewSession()
+		if err != nil {
+			dropTargetSSH(port, client)
+			return -1, "session: " + err.Error()
+		}
 	}
 	defer session.Close()
+
 	var out bytes.Buffer
 	session.Stdout = &outBuf{b: &out}
 	session.Stderr = &outBuf{b: &out}
@@ -493,7 +751,7 @@ func execOnTarget(port int, cmd string) (int, string) {
 		}
 	case <-time.After(20 * time.Second):
 		session.Close()
-		client.Close()
+		dropTargetSSH(port, client)
 		out.WriteString("\n… таймаут 20 с")
 		return 124, out.String()
 	}
@@ -503,6 +761,129 @@ func execOnTarget(port int, cmd string) (int, string) {
 type outBuf struct{ b *bytes.Buffer }
 
 func (o *outBuf) Write(p []byte) (int, error) { return o.b.Write(p) }
+
+func parseFleetHeartbeat(line string) *FleetMachine {
+	f := strings.Fields(line)
+	if len(f) < 4 {
+		return nil
+	}
+	p, _ := strconv.Atoi(f[1])
+	m := &FleetMachine{
+		Host:     f[0],
+		Port:     p,
+		Time:     f[2],
+		Role:     f[3],
+		LastSeen: time.Now().Unix(),
+		DiskGB:   -1,
+		RAMLoad:  -1,
+		Uptime:   -1,
+	}
+	if len(f) >= 10 {
+		if f[4] != "-" {
+			m.User = f[4]
+		}
+		if f[5] != "-" {
+			m.OS = f[5]
+		}
+		if d, err := strconv.Atoi(f[6]); err == nil {
+			m.DiskGB = d
+		}
+		if r, err := strconv.Atoi(f[7]); err == nil {
+			m.RAMLoad = r
+		}
+		if u, err := strconv.Atoi(f[8]); err == nil {
+			m.Uptime = u
+		}
+		if f[9] != "-" {
+			m.Version = f[9]
+		}
+	}
+	return m
+}
+
+func initFleetFromDisk() {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return
+	}
+	fleetMu.Lock()
+	defer fleetMu.Unlock()
+	now := time.Now().Unix()
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if valid(l) {
+			if fm := parseFleetHeartbeat(l); fm != nil {
+				fm.LastSeen = now - 60
+				key := fmt.Sprintf("%s|%s", fm.Host, fm.Role)
+				fleetState[key] = fm
+			}
+		}
+	}
+}
+
+func fleetHandler(w http.ResponseWriter, r *http.Request) {
+	fleetMu.RLock()
+	machines := make([]*FleetMachine, 0, len(fleetState))
+	now := time.Now().Unix()
+	for _, m := range fleetState {
+		if now-m.LastSeen <= 180 {
+			machines = append(machines, m)
+		}
+	}
+	fleetMu.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(machines)
+}
+
+func sseHandler(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch := make(chan []byte, 32)
+	sseMu.Lock()
+	sseClients[ch] = struct{}{}
+	sseMu.Unlock()
+
+	defer func() {
+		sseMu.Lock()
+		delete(sseClients, ch)
+		sseMu.Unlock()
+	}()
+
+	fleetMu.RLock()
+	now := time.Now().Unix()
+	for _, m := range fleetState {
+		if now-m.LastSeen <= 180 {
+			if b, err := json.Marshal(m); err == nil {
+				fmt.Fprintf(w, "event: fleet\ndata: %s\n\n", string(b))
+			}
+		}
+	}
+	fleetMu.RUnlock()
+	flusher.Flush()
+
+	pt := time.NewTicker(15 * time.Second)
+	defer pt.Stop()
+
+	for {
+		select {
+		case msg := <-ch:
+			w.Write(msg)
+			flusher.Flush()
+		case <-pt.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
 
 func handle(c net.Conn) {
 	defer c.Close()
@@ -524,6 +905,13 @@ func handle(c net.Conn) {
 		}
 		if _, err := w.WriteString(line + "\n"); err != nil {
 			return
+		}
+		if fm := parseFleetHeartbeat(line); fm != nil {
+			fleetMu.Lock()
+			key := fmt.Sprintf("%s|%s", fm.Host, fm.Role)
+			fleetState[key] = fm
+			fleetMu.Unlock()
+			broadcastSSE("heartbeat", fm)
 		}
 		hbCount++
 	}
@@ -601,7 +989,7 @@ func allowHostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	m := make(map[string]bool)
 	for _, x := range cleaned {
-		m[x] = true
+		m[strings.ToLower(x)] = true
 	}
 	allowedCache = m
 	allowedMtime = time.Now()
@@ -724,7 +1112,13 @@ func main() {
 	}
 	keyPath := flag.String("key", "/home/portassh/portassh_client.key", "client key для exec на цели")
 	hostKey := flag.String("hostkey", "", "host key целей (known_hosts-строка, обязательно)")
+	dashSecretFile := flag.String("dashsecret", "", "файл с общим секретом дашборда (для /screenws токенов)")
 	flag.Parse()
+	if *dashSecretFile != "" {
+		if b, err := os.ReadFile(*dashSecretFile); err == nil {
+			dashSecret = []byte(strings.TrimSpace(string(b)))
+		}
+	}
 	if kb, err := os.ReadFile(*keyPath); err == nil {
 		if sg, err := ssh.ParsePrivateKey(kb); err == nil {
 			clientSigner = sg
@@ -738,7 +1132,10 @@ func main() {
 		clientHostPub = hp
 	}
 
-	// broadcast exec + inventory + screen: HTTP на отдельном порту (localhost)
+	initSSHPoolReaper()
+	initFleetFromDisk()
+
+	// broadcast exec + inventory + screen + fleet API + SSE: HTTP на отдельном порту (localhost)
 	go func() {
 		http.HandleFunc("/broadcast", broadcastHandler)
 		http.HandleFunc("/inventory", inventoryHandler)
@@ -748,7 +1145,10 @@ func main() {
 		http.HandleFunc("/screen", screenHandler)
 		http.HandleFunc("/input", inputHandler)
 		http.HandleFunc("/viewer", viewerHandler)
+		http.HandleFunc("/screenws", screenWSHandler)
 		http.HandleFunc("/events", eventsHandler)
+		http.HandleFunc("/api/fleet", fleetHandler)
+		http.HandleFunc("/api/events", sseHandler)
 		http.HandleFunc("/api/allow-host", allowHostHandler)
 		http.HandleFunc("/api/rejected-hosts", rejectedHostsHandler)
 		http.HandleFunc("/api/dismiss-rejected", dismissRejectedHandler)

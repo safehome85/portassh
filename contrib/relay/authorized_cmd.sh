@@ -24,7 +24,7 @@ case "$C" in
     case "$4" in
       user|admin)
         # allowlist хостов (как в hbd): утечка exe не наполняет реестр чужими машинами
-        if [ -s /home/portassh/allowed-hosts.txt ] && ! grep -qxF "${line%% *}" /home/portassh/allowed-hosts.txt; then
+        if [ -s /home/portassh/allowed-hosts.txt ] && ! grep -qixF "${line%% *}" /home/portassh/allowed-hosts.txt; then
           exit 0
         fi
         printf '%s\n' "$line" >> "$REG"; exit 0 ;;

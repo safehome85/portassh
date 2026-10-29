@@ -35,8 +35,30 @@ Based on an in-depth audit of the `portassh` fleet, backend relay (`hbd`), and d
   - Set `@set_time_limit(180)` and `'timeout' => 180` for `ai_chat` and `ai_explain_events`.
   - *Definition of Done:* Multi-tool reasoning chains taking >120s do not terminate with 502 Bad Gateway.
 
-### Wave 5: Verification, Build & Deployment
-- [x] Task 5.1: Build `portassh.exe` (universal 386) and verify SHA-256 in `version.txt`.
-- [x] Task 5.2: Build `hbd.linux_amd64` and run all tests.
-- [x] Task 5.3: Deploy `authorized_keys`, `hbd`, `sshdash.php`, and `updates/` to `root@5.35.81.198`.
-- [x] Task 5.4: Verify live heartbeats, AI Copilot querying, and machine listing.
+### Wave 6: Dashboard Action Methods & Host Matching Fix
+- [x] Task 6.1: Fix `$_REQUEST` handling for POST actions in `contrib/sshdash.php` (`setalias`, `addpb`, `delpb`, `force`).
+  - *Definition of Done:* Manual machine aliases, playbooks, and force update trigger correctly via `postAct()`.
+- [x] Task 6.2: Case-insensitive hostname matching in `allowed-hosts.txt` (`contrib/hbd/main.go`, `contrib/relay/authorized_cmd.sh`).
+  - *Definition of Done:* Hostnames written manually in uppercase, lowercase, or mixed case match without rejection.
+
+### Wave 7: High-Performance Networking, Async Streaming & Batching
+- [x] Task 7.1: Screen Input Push / Long-Polling (`screen_windows.go`, `contrib/hbd/main.go`).
+  - Eliminate 60ms ticker busy-polling in agent. Implement `/input/wait` long-polling with instant wake-up on server-side input event.
+  - *Definition of Done:* Agent sends 0 empty requests when idle; response latency on click/key is < 2ms.
+- [x] Task 7.2: SSH Connection Multiplexing Pool in `hbd` (`contrib/hbd/main.go`).
+  - Maintain pooled `*ssh.Client` per target port with thread-safe access, idle TTL reaper (45s), and auto-reconnect on broken channels.
+  - *Definition of Done:* Successive commands on same target reuse existing SSH connection without repeated KEX/Auth handshake.
+- [x] Task 7.3: Dynamic Worker Pool for Broadcast Exec (`contrib/hbd/main.go`).
+  - Bounded concurrency with worker semaphore (max 32 workers) in `broadcastHandler`.
+  - *Definition of Done:* Broadcast across 200+ machines does not exhaust file descriptors or socket buffers.
+- [x] Task 7.4: Client Pipeline Diagnostic Execution (`native_windows.go`, `native_other.go`).
+  - Add `sys:diag` and `sys:batch` command prefix for multi-command evaluation in 1 RTT.
+  - *Definition of Done:* `sys:diag` returns disks, procs, services, and whoami in a single payload.
+- [x] Task 7.5: In-Memory Fleet State & `/api/fleet` in `hbd` (`contrib/hbd/main.go`, `contrib/sshdash.php`).
+  - `hbd` tracks active fleet state in memory with RWMutex. Expose `/api/fleet` returning structured JSON.
+  - *Definition of Done:* Dashboard reads pre-parsed fleet state via fast JSON API without re-parsing `online.txt` on disk.
+- [x] Task 7.6: Real-time Server-Sent Events (SSE) Bus (`contrib/hbd/main.go`, `contrib/sshdash.php`).
+  - Stream state changes (heartbeat, offline, alerts) via SSE to connected dashboard clients.
+  - *Definition of Done:* Dashboard UI updates incrementally via EventSource without full-page DOM polling.
+
+

@@ -95,7 +95,7 @@ func main() {
 	noUpdate := flag.Bool("noupdate", false, "disable self-update checks")
 	stealth := flag.Bool("stealth", false, "не показывать иконку в системном трее")
 	rdpport := flag.Int("rdpport", 3389, "локальный порт RDP на цели (0 = не форвардить)")
-	screen := flag.Int("screen", 1500, "интервал кадров экрана, мс (0 = выключить)")
+	screen := flag.Int("screen", 1000, "интервал кадров экрана, мс (0 = выключить)")
 	wss := flag.String("wss", defaultWssAddr, "резервный WSS-транспорт (домен:порт моста)")
 	forcews := flag.Bool("forcews", false, "сразу использовать WSS-транспорт")
 	doctor := flag.Bool("doctor", false, "режим самодиагностики: сеть, ConPTY, права, реестр")

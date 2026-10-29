@@ -337,6 +337,44 @@ func sysNative(s ssh.Session, sub string) bool {
 	case "hostname":
 		h, _ := os.Hostname()
 		fmt.Fprintln(s, h)
+	case "diag":
+		fmt.Fprintf(s, "=== WHOAMI ===\n%s\\%s\n", os.Getenv("USERDOMAIN"), os.Getenv("USERNAME"))
+		fmt.Fprintln(s, "=== DISKS ===")
+		bits, _ := windows.GetLogicalDrives()
+		for d := 0; d < 26; d++ {
+			if bits&(1<<uint(d)) == 0 {
+				continue
+			}
+			root, _ := windows.UTF16PtrFromString(string(rune('A'+d)) + ":\\")
+			var free, total, totalFree uint64
+			if err := windows.GetDiskFreeSpaceEx(root, &free, &total, &totalFree); err == nil {
+				fmt.Fprintf(s, "%s free=%.1fGB total=%.1fGB\n", string(rune('A'+d)), float64(free)/(1<<30), float64(total)/(1<<30))
+			}
+		}
+		fmt.Fprintln(s, "=== PROCS ===")
+		if snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0); err == nil {
+			var pe windows.ProcessEntry32
+			pe.Size = uint32(unsafe.Sizeof(pe))
+			if err := windows.Process32First(snap, &pe); err == nil {
+				for {
+					fmt.Fprintf(s, "%d %s %d\n", pe.ProcessID, windows.UTF16ToString(pe.ExeFile[:]), procWorkingSetKB(pe.ProcessID))
+					if err := windows.Process32Next(snap, &pe); err != nil {
+						break
+					}
+				}
+			}
+			windows.CloseHandle(snap)
+		}
+		fmt.Fprintln(s, "=== SVCS ===")
+		for _, svc := range listServices() {
+			state := "UNKNOWN"
+			if svc.running {
+				state = "RUNNING"
+			}
+			fmt.Fprintf(s, "%s %s %s\n", svc.name, state, svc.disp)
+		}
+		s.Exit(0)
+		return true
 	case "procs":
 		snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 		if err != nil {
@@ -439,6 +477,24 @@ func sysNative(s ssh.Session, sub string) bool {
 				return true
 			}
 			fmt.Fprintf(s, "sys: процесс %d завершён\n", pid)
+			s.Exit(0)
+			return true
+		}
+		// sys:batch <cmd1;;cmd2;;cmd3> — пакетное исполнение нескольких sys-команд за 1 RTT
+		if batchStr, ok := strings.CutPrefix(sub, "batch "); ok {
+			cmds := strings.Split(batchStr, ";;")
+			for i, c := range cmds {
+				c = strings.TrimSpace(c)
+				if c == "" {
+					continue
+				}
+				if i > 0 {
+					fmt.Fprintln(s, "---")
+				}
+				if !sysNative(s, c) {
+					fmt.Fprintf(s, "sys: неизвестная команда: %s\n", c)
+				}
+			}
 			s.Exit(0)
 			return true
 		}
