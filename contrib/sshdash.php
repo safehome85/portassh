@@ -508,8 +508,10 @@ BAT;
 // exe проверяет его при каждом heartbeat (раз в минуту)
 if (isset($_REQUEST['force'])) {
     csrf_guard();
-    file_put_contents($PRIVATE . '/portassh-force.txt', (string) time());
-    header('Location: /sshdash');
+    $now = (string) time();
+    @file_put_contents($PRIVATE . '/portassh-force.txt', $now);
+    @file_put_contents('/home/portassh/force-flag.txt', $now);
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? '/sshdash'));
     exit;
 }
 
@@ -570,7 +572,10 @@ if ($fleetRaw) {
             $upt = isset($m['upt']) && (int)$m['upt'] >= 0 ? (int)$m['upt'] : null;
             $ver = $m['ver'] ?? '';
             $alias = $aliases[$host] ?? null;
-            $verOk = ($ver !== '' && $LATEST_NAME !== '' && $ver === $LATEST_NAME);
+            $verOk = ($ver !== '' && (
+                ($LATEST_NAME !== '' && $ver === $LATEST_NAME) ||
+                ($LATEST_VER !== '' && (str_starts_with($LATEST_VER, $ver) || str_starts_with($ver, substr($LATEST_VER, 0, 12))))
+            ));
             $key = $host . '|' . $role;
             $latest[$key] = compact('host', 'port', 'role', 'ts', 't', 'user', 'osv', 'disk', 'ram', 'ver', 'verOk', 'alias', 'upt');
         }
@@ -593,7 +598,8 @@ if (!$latest) {
         $alias = isset($aliases[$host]) ? $aliases[$host] : null;
         $verOk = false;
         if ($ver !== '') {
-            $verOk = ($LATEST_NAME !== '' && $ver === $LATEST_NAME);
+            $verOk = ($LATEST_NAME !== '' && $ver === $LATEST_NAME)
+                || ($LATEST_VER !== '' && (str_starts_with($LATEST_VER, $ver) || str_starts_with($ver, substr($LATEST_VER, 0, 12))));
         }
         if (!in_array($role, ['user', 'admin'], true)) continue;
         [$dmy, $hm] = explode('_', $t);
@@ -1029,7 +1035,7 @@ if ($selRow === null && $M) { $selRow = $M[0]; }
       <div class="kv">
         <div class="kvrow"><span class="k">ОС</span><span class="v">Windows<?= $selRow['osv'] !== '' ? ' · сборка ' . htmlspecialchars($selRow['osv']) : '' ?></span></div>
         <div class="kvrow"><span class="k">Пользователь</span><span class="v"><?= $selRow['user'] !== '' ? htmlspecialchars($selRow['user']) : '—' ?></span></div>
-        <div class="kvrow"><span class="k">portassh</span><span class="v"><?= $selRow['ver'] !== '' ? ($selRow['verOk'] ? '<span class="chip ver-ok">ver. ' . htmlspecialchars($selRow['ver']) . ' · актуальна</span>' : ($LATEST_NAME !== '' ? '<span class="chip ver-old">устарела → ver. ' . htmlspecialchars($LATEST_NAME) . '</span>' : '<span class="chip">ver. ' . htmlspecialchars($selRow['ver']) . '</span>')) : '—' ?></span></div>
+        <div class="kvrow"><span class="k">portassh</span><span class="v"><?= $selRow['ver'] !== '' ? ($selRow['verOk'] ? '<span class="chip ver-ok">ver. ' . htmlspecialchars($LATEST_NAME !== '' ? $LATEST_NAME : $selRow['ver']) . ' · актуальна</span>' : ($LATEST_NAME !== '' ? '<span class="chip ver-old">устарела: ' . htmlspecialchars($selRow['ver']) . ' → доступна ' . htmlspecialchars($LATEST_NAME) . '</span>' : '<span class="chip">ver. ' . htmlspecialchars($selRow['ver']) . '</span>')) : '—' ?></span></div>
       </div>
       <?php if ($selRow['aliasNote'] !== ''): ?><div class="note">📝 <?= htmlspecialchars($selRow['aliasNote']) ?></div><?php endif; ?>
       <div class="actgrid"><?= $selRow['btnHtml'] ?></div>

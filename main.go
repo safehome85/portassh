@@ -891,13 +891,20 @@ func connectCommand(relay string, port int) string {
 	return fmt.Sprintf("ssh -C -i portassh_client.key -o StrictHostKeyChecking=accept-new -J support@%s -p %d anyuser@localhost", relay, port)
 }
 
-// ownVersion: первые 12 символов sha256 своего exe — идентификатор сборки
-// (совпадает с version.txt на relay). Кэшируется: exe после self-update новый.
+// appVersion: задаётся при компиляции через -ldflags "-X main.appVersion=1.76"
+var appVersion string
+
+// ownVersion: именованная версия или первые 12 символов sha256 своего exe.
+// Кэшируется: exe после self-update новый.
 var ownVersionCache atomic.Value // string
 
 func ownVersion() string {
 	if v, ok := ownVersionCache.Load().(string); ok && v != "" {
 		return v
+	}
+	if appVersion != "" {
+		ownVersionCache.Store(appVersion)
+		return appVersion
 	}
 	v := "?"
 	if exe, err := os.Executable(); err == nil {

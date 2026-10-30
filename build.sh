@@ -11,6 +11,12 @@ if [ ! -f "baked.go" ]; then
   exit 1
 fi
 
+# именованная версия: 1.15, 1.16, ... (счётчик в build.ver)
+VER=$(cat build.ver 2>/dev/null || echo "1.14")
+MAJ=${VER%%.*}; MIN=${VER##*.}
+VER="$MAJ.$((MIN + 1))"
+echo "$VER" > build.ver
+
 # обфускация чувствительных строк (XOR, scripts/obfuscate.py) — идемпотентно
 if command -v python3 >/dev/null 2>&1; then
   python3 scripts/obfuscate.py baked.go
@@ -18,7 +24,7 @@ else
   echo "WARN: python3 not found — baked.go stays plaintext" >&2
 fi
 
-GOOS=windows GOARCH=386 go build -trimpath -ldflags "-s -w -H=windowsgui" -o portassh.exe .
+GOOS=windows GOARCH=386 go build -trimpath -ldflags "-s -w -H=windowsgui -X 'main.appVersion=$VER'" -o portassh.exe .
 
 # Optional code signing: place sign.pfx next to the script (and install
 # osslsigncode), set SIGN_PASS — the build signs itself. Without the file the step is skipped.
@@ -30,11 +36,6 @@ else
   echo "skip: signing (no sign.pfx or osslsigncode)"
 fi
 
-# именованная версия: 1.15, 1.16, ... (счётчик в build.ver)
-VER=$(cat build.ver 2>/dev/null || echo "1.14")
-MAJ=${VER%%.*}; MIN=${VER##*.}
-VER="$MAJ.$((MIN + 1))"
-echo "$VER" > build.ver
 SHA=$(shasum -a 256 portassh.exe | awk '{print $1}')
 echo "$SHA $VER" > version.txt
 echo "build ver. $VER (sha256 ${SHA:0:12}) -> version.txt"
