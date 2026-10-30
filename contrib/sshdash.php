@@ -798,8 +798,10 @@ if ($rawRej !== false) {
 <div class="wrap">
 <script>const INV_ALL_PORTS = <?= json_encode(array_map(fn($e) => (int) $e['port'], array_values($active))) ?>;</script>
 <script>
-// токены доступа к live-экрану (wss /hbdws/), привязаны к порту и текущему часу UTC
+// токены доступа к live-экрану (wss /hbdws/) и терминалу (wsterm)
 const SCR_TOKS = <?= json_encode($scrToks ?? []) ?>;
+const TERM_TOKS = <?= json_encode($termToks ?? []) ?>;
+const WSS_HOST = '<?= htmlspecialchars($WSS_HOST) ?>';
 </script>
 <script>
 // CSRF: все мутирующие вызовы — только POST; токен добавляется в каждый fetch
@@ -972,7 +974,7 @@ foreach ($active as $e) {
              . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false" title="метка/заметка">✏️</a>';
     $tTok = $termToks[(int) $e['port']] ?? '';
     $tUrl = 'https://' . $WSS_HOST . '/wsterm?port=' . (int) $e['port'] . ($tTok !== '' ? '&t=' . $tTok : '');
-    $btnHtml = '<a class="btn primary" href="' . htmlspecialchars($tUrl) . '" target="_blank">🖥 Терминал</a>'
+    $btnHtml = '<a class="btn primary" href="' . htmlspecialchars($tUrl) . '" onclick="openTermModal(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\', \'' . htmlspecialchars($tTok) . '\');return false" title="веб-терминал">🖥 Терминал</a>'
              . '<a class="btn" href="#" onclick="openScreen(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="экран в браузере">🖼 Экран</a>'
              . '<a class="btn" href="#" onclick="openFiles(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="файлы машины">📁 Файлы</a>'
              . '<a class="btn sky" href="?rdp=' . (int) $e['port'] . '" title="скачать .rdp">🖥️ RDP</a>'
@@ -1423,6 +1425,22 @@ document.querySelectorAll('.pmi').forEach(el => {
   </div>
 </div>
 
+<div id="termmodal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.75);z-index:70" onclick="if(event.target===this)closeTermModal()">
+  <div style="display:flex;flex-direction:column;width:min(1100px,calc(100vw - 32px));height:min(720px,calc(100vh - 40px));margin:20px auto;background:#12151c;border:1px solid #2a3040;border-radius:12px;overflow:hidden;box-shadow:0 20px 40px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:#1a1f2c;border-bottom:1px solid #2a3040;color:#e8ecf4">
+      <div style="font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px">
+        <span>🖥 Веб-терминал — <span id="termhost" style="color:#60a5fa"></span></span>
+        <span style="font-size:12px;color:#94a3b8;font-weight:normal">(порт <span id="termport"></span>)</span>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center">
+        <a id="termnewtab" href="#" target="_blank" style="color:#94a3b8;text-decoration:none;font-size:13px" title="Открыть в новой вкладке">↗ В отдельном окне</a>
+        <a href="#" onclick="closeTermModal();return false" style="color:#e8ecf4;text-decoration:none;font-size:18px;font-weight:bold">✕</a>
+      </div>
+    </div>
+    <iframe id="termframe" src="about:blank" style="flex:1;border:0;width:100%;height:100%;background:#12151c"></iframe>
+  </div>
+</div>
+
 <div id="scrmodal" style="display:none;position:fixed;inset:0;background:#0d1017;z-index:60" onclick="if(event.target===this)closeScreen()">
   <div style="display:flex;flex-direction:column;height:100%;padding:10px;gap:8px">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;color:#e8eefc;flex-wrap:wrap">
@@ -1456,6 +1474,19 @@ document.addEventListener('wheel', e => {
   setTimeout(() => { scrWheelSent = false; }, 120);
 }, { passive: false });
 function scrModalClosed() { return document.getElementById('scrmodal').style.display !== 'block'; }
+function openTermModal(port, host, tok) {
+  if (!tok) tok = TERM_TOKS[port] || '';
+  const url = 'https://' + WSS_HOST + '/wsterm?port=' + port + (tok ? '&t=' + encodeURIComponent(tok) : '');
+  document.getElementById('termhost').textContent = host;
+  document.getElementById('termport').textContent = port;
+  document.getElementById('termnewtab').href = url;
+  document.getElementById('termframe').src = url;
+  document.getElementById('termmodal').style.display = 'block';
+}
+function closeTermModal() {
+  document.getElementById('termframe').src = 'about:blank';
+  document.getElementById('termmodal').style.display = 'none';
+}
 function openScreen(port, host) {
   scrPort = port;
   document.getElementById('scrhost').textContent = host;
