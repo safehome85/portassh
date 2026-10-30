@@ -3,6 +3,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,7 +14,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -20,13 +25,77 @@ import (
 )
 
 var (
-	listen   = flag.String("listen", "127.0.0.1:8896", "listen address (8897 занят HTTP API hbd, 8898 — его heartbeat)")
-	keyPath  = flag.String("key", "", "client private key accepted by targets")
-	hostKey  = flag.String("hostkey", "", "target embedded server host key line")
-	tlsCert  = flag.String("cert", "", "TLS certificate (включает HTTPS на этом же порту)")
-	tlsKey   = flag.String("tlskey", "", "TLS key")
-	htpasswd = flag.String("htpasswd", "", "htpasswd файл для basic-auth (bcrypt-строки $2a$/$2y$)")
+	listen     = flag.String("listen", "127.0.0.1:8896", "listen address (8897 занят HTTP API hbd, 8898 — его heartbeat)")
+	keyPath    = flag.String("key", "", "client private key accepted by targets")
+	hostKey    = flag.String("hostkey", "", "target embedded server host key line")
+	tlsCert    = flag.String("cert", "", "TLS certificate (включает HTTPS на этом же порту)")
+	tlsKey     = flag.String("tlskey", "", "TLS key")
+	htpasswd   = flag.String("htpasswd", "", "htpasswd файл для basic-auth (bcrypt-строки $2a$/$2y$)")
+	secretPath = flag.String("secret", "/home/portassh/dash.secret", "файл с общим секретом дашборда для подписанных URL-токенов")
 )
+
+var (
+	secretMu    sync.RWMutex
+	cachedSec   []byte
+	lastSecRead time.Time
+)
+
+func getSecret() []byte {
+	secretMu.RLock()
+	if time.Since(lastSecRead) < 30*time.Second && len(cachedSec) > 0 {
+		defer secretMu.RUnlock()
+		return cachedSec
+	}
+	secretMu.RUnlock()
+
+	secretMu.Lock()
+	defer secretMu.Unlock()
+	if b, err := os.ReadFile(*secretPath); err == nil {
+		cachedSec = []byte(strings.TrimSpace(string(b)))
+	}
+	lastSecRead = time.Now()
+	return cachedSec
+}
+
+// termToken: sha256("wsterm|<secret>|<port>|<час UTC>")[:32 hex]; совпадает с дашбордом
+func termToken(secret []byte, port int, bucket string) string {
+	h := sha256.Sum256([]byte("wsterm|" + string(secret) + "|" + strconv.Itoa(port) + "|" + bucket))
+	return hex.EncodeToString(h[:])[:32]
+}
+
+func termTokValid(t string, port int) bool {
+	sec := getSecret()
+	if len(sec) == 0 || len(t) != 32 || port < 1024 {
+		return false
+	}
+	now := time.Now().UTC().Format("2006010215")
+	prev := time.Now().UTC().Add(-time.Hour).Format("2006010215")
+	return subtle.ConstantTimeCompare([]byte(t), []byte(termToken(sec, port, now))) == 1 ||
+		subtle.ConstantTimeCompare([]byte(t), []byte(termToken(sec, port, prev))) == 1
+}
+
+// authGuard: разрешает доступ по подписанному токену дашборда или по Basic Auth
+func authGuard(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		port, _ := strconv.Atoi(r.URL.Query().Get("port"))
+		tok := r.URL.Query().Get("t")
+		// 1. Быстрый беспарольный доступ по токену из дашборда
+		if port > 0 && tok != "" && termTokValid(tok, port) {
+			next(w, r)
+			return
+		}
+		// 2. Резерв: Basic Auth
+		if *htpasswd != "" {
+			user, pass, ok := r.BasicAuth()
+			if ok && checkHtpasswd(*htpasswd, user, pass) {
+				next(w, r)
+				return
+			}
+		}
+		w.Header().Set("WWW-Authenticate", `Basic realm="portassh"`)
+		http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
+	}
+}
 
 func basicAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -76,11 +145,12 @@ const pageHTML = `<!DOCTYPE html>
 </head><body><div id="t"></div>
 <script>
 const PORT = new URLSearchParams(location.search).get('port') || '2200';
+const TOK  = new URLSearchParams(location.search).get('t') || '';
 const term = new Terminal({cursorBlink:true, fontSize:14, theme:{background:'#12151c'}});
 term.open(document.getElementById('t'));
 term.writeln('\x1b[36mportassh — подключение к машине (порт ' + PORT + ')...\x1b[0m');
 const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-const wsURL = proto + location.host + '/ws?port=' + PORT;
+const wsURL = proto + location.host + '/ws?port=' + PORT + (TOK ? '&t=' + encodeURIComponent(TOK) : '');
 term.writeln('\x1b[90mws-url: ' + wsURL + '\x1b[0m');
 let ws;
 try {
@@ -202,7 +272,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/wsterm", basicAuth(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/wsterm", authGuard(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/wsterm") && !strings.HasSuffix(r.URL.Path, "/wsterm/") {
 			http.NotFound(w, r)
 			return
@@ -210,14 +280,14 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, pageHTML)
 	}))
-	// origin-check x/net/websocket отключён: доступ закрывает nginx basic-auth
+	// origin-check x/net/websocket отключён: доступ закрывает authGuard / token
 	wsServer := websocket.Server{
 		Handler: websocket.Handler(func(ws *websocket.Conn) {
 			bridge(ws, ws.Request().URL.Query().Get("port"), signer, hostPub)
 		}),
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 	}
-	http.Handle("/ws", basicAuth(wsServer.ServeHTTP))
+	http.Handle("/ws", authGuard(wsServer.ServeHTTP))
 	// SSH-туннель: WS ↔ локальный sshd (резервный транспорт portassh).
 	// Под basic-auth, как /ws: клиент шлёт Authorization сама (transport_ws.go).
 	http.Handle("/tunnel", basicAuth(websocket.Server{

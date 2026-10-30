@@ -616,14 +616,20 @@ if (!$latest) {
 $active = array_filter($latest, fn($e) => $sysNow - $e['ts'] <= $ACTIVE_SECS);
 usort($active, fn($a, $b) => $b['ts'] <=> $a['ts']);
 
-// live-экран: токены wss /hbdws/screenws?port=N&t=..., тот же секрет, что у hbd
+// live-экран и live-терминал: токены wss /hbdws/screenws и wsterm /ws, тот же секрет, что у hbd/wsterm
 $scrToks = [];
+$termToks = [];
 $scrSecretFile = '/home/portassh/dash.secret';
-if (is_file($scrSecretFile)) {
+if (!is_file($scrSecretFile) || !is_readable($scrSecretFile)) {
+    $scrSecretFile = $PRIVATE . '/dash.secret';
+}
+if (is_file($scrSecretFile) && is_readable($scrSecretFile)) {
     $scrSecret = trim((string) file_get_contents($scrSecretFile));
     $bucketNow = gmdate('YmdH');
     foreach ($active as $e) {
-        $scrToks[(int) $e['port']] = substr(hash('sha256', 'scr|' . $scrSecret . '|' . (int) $e['port'] . '|' . $bucketNow), 0, 32);
+        $p = (int) $e['port'];
+        $scrToks[$p] = substr(hash('sha256', 'scr|' . $scrSecret . '|' . $p . '|' . $bucketNow), 0, 32);
+        $termToks[$p] = substr(hash('sha256', 'wsterm|' . $scrSecret . '|' . $p . '|' . $bucketNow), 0, 32);
     }
 }
 $bcmdSaved = isset($_REQUEST['broadcast']) ? (string) ($_REQUEST['bcmd'] ?? '') : '';
@@ -964,7 +970,9 @@ foreach ($active as $e) {
     $editBtn = '<a href="#" onclick="editAlias(\'' . htmlspecialchars($e['host']) . '\', '
              . htmlspecialchars(json_encode($alias !== null ? $alias['name'] : '')) . ', '
              . htmlspecialchars(json_encode($alias !== null ? $alias['note'] : '')) . ');return false" title="метка/заметка">✏️</a>';
-    $btnHtml = '<a class="btn primary" href="https://' . $WSS_HOST . '/wsterm?port=' . (int) $e['port'] . '" target="_blank">🖥 Терминал</a>'
+    $tTok = $termToks[(int) $e['port']] ?? '';
+    $tUrl = 'https://' . $WSS_HOST . '/wsterm?port=' . (int) $e['port'] . ($tTok !== '' ? '&t=' . $tTok : '');
+    $btnHtml = '<a class="btn primary" href="' . htmlspecialchars($tUrl) . '" target="_blank">🖥 Терминал</a>'
              . '<a class="btn" href="#" onclick="openScreen(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="экран в браузере">🖼 Экран</a>'
              . '<a class="btn" href="#" onclick="openFiles(' . (int) $e['port'] . ', \'' . htmlspecialchars($dispName) . '\');return false" title="файлы машины">📁 Файлы</a>'
              . '<a class="btn sky" href="?rdp=' . (int) $e['port'] . '" title="скачать .rdp">🖥️ RDP</a>'
